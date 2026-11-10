@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1C1E1B" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Idlenomics" />
+  <meta name="format-detection" content="telephone=no" />
+  <title>Idlenomics — Eco-Brutalist Civilization</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app-shell">
+    <!-- TOP STATUS & RESOURCE LEDGER -->
+    <header id="top-bar">
+      <div class="era-strip">
+        <div>
+          <span class="label-muted">ERA:</span>
+          <strong id="era-title">Stone Age</strong>
+          <span id="offline-badge" class="badge-inline hidden"></span>
+        </div>
+        <div class="header-controls">
+          <button id="btn-theme" class="btn-small" type="button" aria-label="Toggle Paper Mode">Paper Mode</button>
+        </div>
+      </div>
+
+      <!-- Resource Grid -->
+      <div id="resource-ledger" class="res-grid"></div>
+    </header>
+
+    <!-- CALM EVENT BANNER (NO POPUPS OR FLASHES) -->
+    <section id="event-banner" class="event-box hidden" aria-live="polite"></section>
+
+    <!-- SCROLLABLE WORKSPACE -->
+    <main id="workspace">
+      <!-- TAB 1: SETTLEMENT (FORAGE, WORKERS, BUILDINGS) -->
+      <section id="tab-settlement" class="tab-panel active">
+        <div class="section-block">
+          <div class="section-header">
+            <span>MANUAL GATHERING</span>
+            <span class="label-muted">Touch to collect raw materials</span>
+          </div>
+          <div id="gather-grid" class="action-grid"></div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <span>POPULATION &amp; LABOR</span>
+            <span id="pop-summary" class="tabular">0 / 5 Idle: 0</span>
+          </div>
+          <div id="worker-list" class="row-list"></div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <span>STRUCTURES &amp; STORAGE</span>
+            <span class="label-muted">Passive production &amp; caps</span>
+          </div>
+          <div id="building-list" class="row-list"></div>
+        </div>
+      </section>
+
+      <!-- TAB 2: CRAFT & TECH -->
+      <section id="tab-craft" class="tab-panel">
+        <div class="section-block">
+          <div class="section-header">
+            <span>MULTI-STEP CRAFTING CHAINS</span>
+            <span id="artisan-bonus-label" class="label-muted">Artisans: 0</span>
+          </div>
+          <p class="helper-note">Craft batches manually or toggle [Auto] to let assigned Artisans refine goods every cycle.</p>
+          <div id="craft-list" class="row-list"></div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <span>TECHNOLOGIES &amp; ERAS</span>
+            <span class="label-muted">Unlocks eras, jobs &amp; recipes</span>
+          </div>
+          <div id="tech-list" class="row-list"></div>
+        </div>
+      </section>
+
+      <!-- TAB 3: WORLD (WONDERS, MILITARY, TRADE) -->
+      <section id="tab-world" class="tab-panel">
+        <div class="section-block">
+          <div class="section-header">
+            <span>WONDERS OF THE WORLD</span>
+            <span class="label-muted">Permanent civilization multipliers</span>
+          </div>
+          <div id="wonder-list" class="row-list"></div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <span>GARRISON &amp; EXPEDITIONS</span>
+            <span id="military-summary" class="tabular">Power: 0 | Defense: 0</span>
+          </div>
+          <div id="unit-list" class="row-list"></div>
+          <div class="sub-header">FRONTIER EXPEDITIONS</div>
+          <div id="expedition-list" class="row-list"></div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <span>DIPLOMACY &amp; TRADE ROUTES</span>
+            <span class="label-muted">Barter surplus stockpiles</span>
+          </div>
+          <div id="trade-list" class="row-list"></div>
+        </div>
+      </section>
+
+      <!-- TAB 4: CHRONICLE -->
+      <section id="tab-chronicle" class="tab-panel">
+        <div class="section-block">
+          <div class="section-header">
+            <span>CIVILIZATION STATS</span>
+            <span id="playtime-label" class="tabular">Time: 0m</span>
+          </div>
+          <div id="stats-summary" class="stats-box"></div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <span>HISTORICAL ANNALS</span>
+            <span class="label-muted">Recent events &amp; milestones</span>
+          </div>
+          <div id="log-list" class="log-container"></div>
+        </div>
+      </section>
+
+      <!-- TAB 5: VAULT (SUPABASE & LOCAL SAVE) -->
+      <section id="tab-vault" class="tab-panel">
+        <div class="section-block">
+          <div class="section-header">
+            <span>SUPABASE CLOUD VAULT (A+C)</span>
+            <span id="sync-status" class="label-muted">Local Storage Active</span>
+          </div>
+          <p class="helper-note">Credentials stay in your phone's local storage. Enter a secret Passphrase to save and browse your 10 most recent cloud snapshots.</p>
+          <div class="form-stack">
+            <label class="field-label">Supabase Project URL
+              <input id="input-supa-url" type="url" class="brutal-input" placeholder="https://xyzcompany.supabase.co" autocomplete="off" />
+            </label>
+            <label class="field-label">Supabase Publishable / Anon Key
+              <input id="input-supa-key" type="password" class="brutal-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5c..." autocomplete="off" />
+            </label>
+            <label class="field-label">Secret Sync Passphrase (Slot Name)
+              <input id="input-sync-key" type="text" class="brutal-input" placeholder="e.g. iron-age-main-run" autocomplete="off" />
+            </label>
+            <div class="btn-row">
+              <button id="btn-save-config" class="btn-brutal" type="button">Save Credentials</button>
+              <button id="btn-cloud-push" class="btn-brutal accent-moss" type="button">Push Cloud Snapshot</button>
+              <button id="btn-cloud-fetch" class="btn-brutal" type="button">Load Snapshot List</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <span>TIME MACHINE (LAST 10 SNAPSHOTS)</span>
+            <span class="label-muted">Tap Restore to roll back state</span>
+          </div>
+          <div id="snapshot-list" class="row-list">
+            <div class="empty-row">No snapshots loaded yet. Configure credentials and tap Load Snapshot List.</div>
+          </div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <span>LOCAL BACKUP &amp; RESET</span>
+            <span class="label-muted">Offline safety controls</span>
+          </div>
+          <div class="btn-row">
+            <button id="btn-export-save" class="btn-brutal" type="button">Copy Save String</button>
+            <button id="btn-import-save" class="btn-brutal" type="button">Import Save String</button>
+            <button id="btn-hard-reset" class="btn-brutal accent-terra" type="button">Wipe Local Save</button>
+          </div>
+          <textarea id="save-string-box" class="brutal-input save-textarea" rows="3" placeholder="Paste save string here to import, or tap Copy Save String..."></textarea>
+        </div>
+      </section>
+    </main>
+
+    <!-- THUMB-ZONE BOTTOM NAVIGATION -->
+    <nav id="bottom-nav" aria-label="Primary Navigation">
+      <button class="nav-btn active" data-tab="tab-settlement" type="button">Settlement</button>
+      <button class="nav-btn" data-tab="tab-craft" type="button">Craft &amp; Tech</button>
+      <button class="nav-btn" data-tab="tab-world" type="button">World</button>
+      <button class="nav-btn" data-tab="tab-chronicle" type="button">Chronicle</button>
+      <button class="nav-btn" data-tab="tab-vault" type="button">Vault</button>
+    </nav>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
