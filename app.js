@@ -27,6 +27,7 @@ function createDefaultState() {
 
   const jobs = {};
   JOBS.forEach((j) => { jobs[j.id] = 0; });
+  jobs.farmer = 1;
 
   const autoCraft = {};
   CRAFT_RECIPES.forEach((c) => { autoCraft[c.id] = false; });
@@ -68,12 +69,24 @@ function loadLocalState() {
     if (!raw) return createDefaultState();
     const parsed = JSON.parse(raw);
     const base = createDefaultState();
+    const mergedJobs = { ...base.jobs, ...(parsed.jobs || {}) };
+    const mergedResources = { ...base.resources, ...(parsed.resources || {}) };
+
+    // Auto-recover early saves where 0 workers were assigned and initial food drained
+    const totalAssigned = Object.values(mergedJobs).reduce((a, b) => a + b, 0);
+    if (totalAssigned === 0 && (parsed.pop || 3) >= 1) {
+      mergedJobs.farmer = 1;
+      if ((mergedResources.food || 0) < 25) {
+        mergedResources.food = 25;
+      }
+    }
+
     return {
       ...base,
       ...parsed,
-      resources: { ...base.resources, ...(parsed.resources || {}) },
+      resources: mergedResources,
       buildings: { ...base.buildings, ...(parsed.buildings || {}) },
-      jobs: { ...base.jobs, ...(parsed.jobs || {}) },
+      jobs: mergedJobs,
       autoCraft: { ...base.autoCraft, ...(parsed.autoCraft || {}) },
       wonders: { ...base.wonders, ...(parsed.wonders || {}) },
       units: { ...base.units, ...(parsed.units || {}) }
