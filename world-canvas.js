@@ -80,25 +80,333 @@ function riverPath(c, begin = true) {
   for(let y=1080;y>=540;y-=5) c.lineTo(riverX(y)+riverWidth(y),y);
   c.closePath();
 }
-function tree(c,x,y,h,p,seed,kind='pine',time=0) {
-  c.save();c.translate(x,y);const sway=Math.sin(time*.65+seed)*h*.012;c.transform(1,0,sway/h,1,0,0);
-  c.fillStyle=p[7];c.fillRect(-h*.028,-h*.82,h*.056,h*.82);
-  if(kind==='cypress') {
-    ellipse(c,0,-h*.53,h*.10,h*.49,p[10]);ellipse(c,-h*.025,-h*.59,h*.06,h*.35,p[11]);
-  } else if(kind==='pine') {
-    const crown=[[0,-h]];
-    for(let j=0;j<9;j++) {
-      const yy=-h+j*h*.086,w=h*(.035+j*.025)*( .87+rand(seed+j)*.25);
-      crown.push([-w*.48,yy+h*.09],[-w,yy+h*.18],[-w*.60,yy+h*.17]);
+/* -------------------------------------------------------------------------
+ * VEGETATION
+ * Species-specific, seeded botanical sprites; world-anchored woodland groves;
+ * projected clearance around cultivated land and architecture. Sprite creation
+ * is independent of population/building ticks. Only near foliage moves per frame.
+ * ---------------------------------------------------------------------- */
+const VEGETATION_BIOMES = {
+  stone: { species:['pine','birch','oak'], shadow:'#193c36', leaf:'#426c4c', light:'#a0b16b', bark:'#756c52' },
+  bronze: { species:['olive','oak','pine'], shadow:'#304a3b', leaf:'#6a8050', light:'#bac18b', bark:'#8e8161' },
+  iron: { species:['pine','birch','pine'], shadow:'#203c41', leaf:'#496c61', light:'#99b1a0', bark:'#7d8580' },
+  classical: { species:['cypress','olive','pine'], shadow:'#234c43', leaf:'#587e59', light:'#b5c490', bark:'#8e8870' },
+  medieval: { species:['oak','birch','pine'], shadow:'#204439', leaf:'#567747', light:'#b6b977', bark:'#80775e' }
+};
+function foliageShape(c,x,y,rx,ry,seed) {
+  const pts=[];
+  for(let j=0;j<15;j++){
+    const a=j/15*TAU, r=.77+rand(seed+j*13)*.34;
+    pts.push([x+Math.cos(a)*rx*r,y+Math.sin(a)*ry*r]);
+  }
+  c.beginPath();c.moveTo((pts[14][0]+pts[0][0])/2,(pts[14][1]+pts[0][1])/2);
+  for(let j=0;j<15;j++){
+    const next=pts[(j+1)%15];
+    c.quadraticCurveTo(pts[j][0],pts[j][1],(pts[j][0]+next[0])/2,(pts[j][1]+next[1])/2);
+  }
+  c.closePath();
+}
+function vegetationTones(era,paper) {
+  const b=VEGETATION_BIOMES[era];
+  const shade=paper?0:.24, night=[26,47,58];
+  const color=hex=>mixColor(parseColor(hex),night,shade);
+  const shadow=color(b.shadow),leaf=color(b.leaf),light=color(b.light),bark=color(b.bark);
+  const css=rgb=>`rgb(${rgb.map(n=>Math.round(n)).join(',')})`;
+  return {rgb:{shadow,leaf,light,bark},shadow:css(shadow),leaf:css(leaf),light:css(light),bark:css(bark),
+    flecks:[css(mixColor(shadow,leaf,.45)),css(leaf),css(mixColor(leaf,light,.48)),css(light)],paper};
+}
+function foliagePatch(c,x,y,rx,ry,seed,tones,silver=false,needle=false) {
+  c.save();
+  if(needle){
+    c.beginPath();
+    for(let j=0;j<36;j++){
+      const a=j/36*TAU,r=(j%2?.55:1)*( .84+rand(seed+j)*.28);
+      const point=[x+Math.cos(a)*rx*r,y+Math.sin(a)*ry*r];
+      if(j)c.lineTo(...point);else c.moveTo(...point);
+    }c.closePath();
+  }else foliageShape(c,x,y,rx,ry,seed);
+  c.clip();
+  // One light field across the entire crown, rather than a shiny radial lobe
+  // on every twig. Small opaque brush marks describe actual leaf clusters.
+  const H=tones.height||270;
+  const g=gradient(c,-H*.32,-H,H*.32,-H*.12,[tones.light,tones.leaf,tones.shadow]);
+  c.fillStyle=g;c.fillRect(x-rx*1.3,y-ry*1.3,rx*2.6,ry*2.6);
+  for(let j=0;j<115;j++){
+    const xx=x+(rand(seed+j*31)-.5)*rx*2.3,yy=y+(rand(seed+j*47+9)-.5)*ry*2.3;
+    const brightness=.50-xx/H*.37-(yy+H*.62)/H*.50+(rand(seed+j*5)-.5)*.80;
+    const lightness=clamp(Math.floor(brightness*4),0,3);
+    c.fillStyle=tones.flecks[lightness];c.globalAlpha=.65+rand(j+seed+90)*.30;
+    const size=.8+rand(j*3+seed)*1.65;
+    if(needle){
+      c.fillRect(xx,yy,size*2.5,.65);
+      c.fillRect(xx+size*.7,yy-1,.7,size*2);
+    }else{
+      c.fillRect(xx,yy,silver?size*2.2:size*1.6,size*.75);
+      c.fillRect(xx+size*.4,yy-.5,size*.7,size*1.5);
     }
-    for(let j=8;j>=0;j--){const yy=-h+j*h*.086,w=h*(.035+j*.025)*(.87+rand(seed+j)*.25);crown.push([w*.65,yy+h*.17],[w*.88,yy+h*.18],[w*.35,yy+h*.09]);}
-    poly(c,crown,p[10]);
-    c.save();c.globalAlpha=.42;
-    for(let j=0;j<9;j++){const yy=-h+j*h*.086,w=h*(.025+j*.023);poly(c,[[0,yy],[-w,yy+h*.18],[-w*.3,yy+h*.14]],p[11]);}c.restore();
-  } else {
-    for(let j=0;j<7;j++) ellipse(c,Math.sin(j*2.4)*h*.18,-h*.62+Math.cos(j*2.4)*h*.18,h*.2,h*.17,j%3?p[10]:p[11]);
+  }
+  // Fine sky holes expose twigs; these erase leaves, never the separate trunk.
+  c.globalCompositeOperation='destination-out';c.globalAlpha=.7;
+  for(let j=0;j<5;j++){
+    const xx=x+(rand(seed+j+18)-.5)*rx*1.8,yy=y+(rand(seed+j+38)-.5)*ry*1.8;
+    c.fillRect(xx,yy,.8+rand(seed+j)*1.3,.6+rand(seed+j+8));
   }
   c.restore();
+}
+function makeVegetationSprite(kind,variant,tones) {
+  const small=['fern','shrub','reed'].includes(kind),w=kind==='fern'?224:small?144:256,h=small?144:310;
+  const anchorX=w/2,anchorY=h-12,artHeight=small?112:270;
+  const make=()=>{const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;return canvas;};
+  const trunk=make(),crown=make();
+  const wood=trunk.getContext('2d'),leaf=crown.getContext('2d');
+  wood.translate(anchorX,anchorY);leaf.translate(anchorX,anchorY);
+  const seed=variant*257+['pine','birch','oak','olive','cypress','fern','shrub','reed'].indexOf(kind)*1009+17;
+  const H=artHeight;
+  tones={...tones,height:H};
+  if(kind==='olive'){
+    const css=rgb=>`rgb(${rgb.map(n=>Math.round(n)).join(',')})`;
+    const sage=mixColor(tones.rgb.leaf,tones.paper?[151,166,136]:[79,104,98],.45);
+    const silver=mixColor(tones.rgb.light,tones.paper?[185,196,158]:[137,151,130],.36);
+    tones={...tones,leaf:css(sage),light:css(silver),flecks:[tones.shadow,css(sage),css(mixColor(sage,silver,.6)),css(silver)]};
+  }
+  const branch=(points,width,birch=false)=>{
+    wood.lineCap='round';wood.lineJoin='round';
+    line(wood,points,birch?'#c3c5ad':tones.bark,width);
+    if(width>2)line(wood,points.map(([x,y])=>[x-width*.18,y]),birch?'#e1dcc3':tones.flecks[1],Math.max(.5,width*.19));
+  };
+  if(kind==='pine'){
+    const lean=(rand(seed)-.5)*13;
+    branch([[0,0],[lean*.3,-H*.45],[lean,-H*.98]],5);
+    // Individual whorls, staggered tips and open trunk gaps give an asymmetric
+    // conifer silhouette. No single triangular crown is used.
+    for(let j=11;j>=0;j--){
+      const u=j/12,y=-H+u*H*.81+(rand(seed+j+33)-.5)*9;
+      const spread=H*(.025+Math.pow(u,.8)*.23)*( .78+rand(seed+j*11)*.28);
+      for(const side of [-1,1]){
+        const tip=side*spread*(.82+rand(seed+j+side+55)*.28),drop=4+u*12;
+        branch([[lean*(1-u),y],[tip*.6,y+drop*.4],[tip,y+drop]],1.1+u*.8);
+        for(let k=0;k<3;k++){
+          const f=.35+k*.32;
+          foliagePatch(leaf,tip*f,y+drop*f-2,3+spread*.27,4+u*6,seed+j*43+k*7+side,tones,false,true);
+        }
+      }
+      if(j%3!==0)foliagePatch(leaf,lean*(1-u),y+2,spread*.28+2,6+u*3,seed+j*51,tones,false,true);
+    }
+  }else if(kind==='cypress'){
+    branch([[0,0],[-2,-H*.5],[1,-H]],4);
+    for(let j=22;j>=0;j--){
+      const u=j/23,y=-H+u*H*.88;
+      const radius=3+H*.105*Math.pow(Math.sin(u*Math.PI),.8);
+      const x=(rand(seed+j)-.5)*radius*.5;
+      foliagePatch(leaf,x,y,radius*(.8+rand(seed+j+8)*.35),10+rand(seed+j+19)*5,seed+j*37,tones,false,true);
+    }
+  }else if(kind==='oak'||kind==='olive'||kind==='birch'){
+    const birch=kind==='birch',olive=kind==='olive',tips=[];
+    const bend=(rand(seed+4)-.5)*(olive?25:12);
+    if(olive)poly(wood,[[-7,0],[-9,-H*.12],[5,-H*.22],[-12,-H*.35],[-6,-H*.43],[3,-H*.43],[0,-H*.33],[15,-H*.22],[0,-H*.11],[6,0]],tones.bark);
+    else poly(wood,[[-5,0],[-2,-H*.17],[bend-3,-H*.43],[bend+4,-H*.43],[4,-H*.13],[8,0]],birch?'#bfc2ad':tones.bark);
+    const limb=(x,y,length,angle,depth,id)=>{
+      const reach=birch?.68:olive?1.02:.88;
+      const ex=clamp(x+Math.sin(angle)*length*reach,-H*.33,H*.33),ey=y-Math.cos(angle)*length;
+      const mx=x+(ex-x)*.42+(rand(id)-.5)*6,my=y+(ey-y)*.48;
+      branch([[x,y],[mx,my],[ex,ey]],1.1+depth*(birch?.8:olive?2:2.1),birch);
+      if(depth===0){tips.push({x:ex,y:ey,seed:id,radius:birch?12:olive?17:20});return;}
+      if(depth<=2)tips.push({x:ex,y:ey+5,seed:id+821,radius:birch?15:olive?22:27});
+      const spread=(birch?.30:olive?.57:.48)+(rand(id+15)-.5)*.18;
+      limb(ex,ey,length*.67,clamp(angle-spread,-1.12,1.12),depth-1,id+73);
+      limb(ex,ey,length*.65,clamp(angle+spread,-1.12,1.12),depth-1,id+139);
+      if(depth<=2&&rand(id+7)>.23)tips.push({x:mx,y:my+9,seed:id+831,radius:birch?13:olive?21:25});
+    };
+    const rootY=-H*(olive?.19:birch?.31:.22);
+    for(let k=0;k<3;k++)limb(bend,rootY,H*(birch?.28:.27),[-.54,.04,.57][k]*(olive?1.3:1),3,seed+k*401);
+    tips.sort((a,b)=>a.y-b.y||a.x-b.x);
+    for(const tip of tips){
+      const radius=tip.radius*(.83+rand(tip.seed)*.35);
+      foliagePatch(leaf,tip.x,tip.y,radius*(olive?1.2:1),radius*(birch?.95:.8),tip.seed,tones,olive);
+    }
+    if(birch)for(let j=0;j<16;j++){
+      const y=-9-j*H*.026,x=bend*(-y/(H*.43));
+      line(wood,[[x-2,y],[x+1+rand(seed+j)*3,y-.4]],'#455c54',.8);
+    }
+    else for(let j=0;j<9;j++)line(wood,[[-3+j*.7,0],[bend-2+j*.5,-H*.4]],tones.shadow,.55);
+    // Root flares join the trunk to the forest floor.
+    branch([[-10,1],[-2,-3],[0,-12]],2,birch);branch([[12,1],[4,-2],[1,-11]],1.8,birch);
+  }else if(kind==='fern'){
+    for(let j=0;j<9;j++){
+      const angle=-1.3+j*.32+(rand(seed+j)-.5)*.15,length=45+rand(seed+j*5)*49;
+      const points=[];
+      for(let k=0;k<=12;k++){
+        const u=k/12;
+        points.push([Math.sin(angle)*length*u,-Math.cos(angle)*length*u+Math.pow(u,3)*length*.3]);
+      }
+      line(leaf,points,tones.leaf,1);
+      for(let k=1;k<11;k++){
+        const [x,y]=points[k],u=k/12,reach=Math.sin(u*Math.PI)*length*.17;
+        for(const side of [-1,1])poly(leaf,[[x,y],[x+side*reach,y+reach*.2],[x+side*reach*.65,y-reach*.35],[x,y-2]],k%3?tones.leaf:tones.light);
+      }
+    }
+  }else if(kind==='shrub'){
+    for(let j=0;j<11;j++){
+      const x=(rand(seed+j)-.5)*72,y=-12-rand(seed+j+55)*30;
+      branch([[0,0],[x*.5,y*.5],[x,y]],1.1);
+      foliagePatch(leaf,x,y,13+rand(seed+j+9)*7,10+rand(seed+j+12)*8,seed+j*51,tones);
+    }
+  }else if(kind==='reed'){
+    for(let j=0;j<19;j++){
+      const x=(rand(seed+j)-.5)*46,height=25+rand(seed+j+3)*70,bend=(rand(seed+j+7)-.5)*30;
+      leaf.beginPath();leaf.moveTo(x,0);leaf.quadraticCurveTo(x+bend*.2,-height*.7,x+bend,-height);
+      leaf.strokeStyle=j%3?tones.leaf:tones.light;leaf.lineWidth=.7+rand(seed+j)*.6;leaf.stroke();
+      if(j%4===0){line(leaf,[[x+bend,-height],[x+bend+1,-height+9]],tones.bark,2.7);}
+      else poly(leaf,[[x,-height*.3],[x+bend*1.3+8,-height*.65],[x+2,-height*.2]],tones.leaf);
+    }
+  }
+  const merged=make(),c=merged.getContext('2d');c.drawImage(trunk,0,0);c.drawImage(crown,0,0);
+  const pixels=c.getImageData(0,0,w,h).data;
+  let left=w,right=0,top=h,bottom=0;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(pixels[(y*w+x)*4+3]){
+    left=Math.min(left,x);right=Math.max(right,x+1);top=Math.min(top,y);bottom=Math.max(bottom,y+1);
+  }
+  const bounds={left:(left-anchorX)/artHeight,right:(right-anchorX)/artHeight,top:(top-anchorY)/artHeight,bottom:(bottom-anchorY)/artHeight};
+  return {canvas:merged,trunk,crown,anchorX,anchorY,artHeight,bounds};
+}
+class VegetationLayer {
+  constructor(era,paper) {
+    this.era=era;this.paper=paper;this.tones=vegetationTones(era,paper);
+    this.species=VEGETATION_BIOMES[era].species;
+    this.atlas=new Map();this.trees=[];this.undergrowth=[];
+    for(const kind of [...new Set([...this.species,'fern','shrub','reed'])]){
+      this.atlas.set(kind,Array.from({length:4},(_,i)=>makeVegetationSprite(kind,i,this.tones)));
+    }
+  }
+  sprite(kind,seed){return this.atlas.get(kind)[Math.floor(rand(seed+77)*4)];}
+  radius(kind,h){return h*Math.max(...this.atlas.get(kind).map(s=>Math.max(-s.bounds.left,s.bounds.right)));}
+  bounds(plant,padding=0){
+    const b=this.sprite(plant.kind,plant.seed).bounds;
+    return {left:plant.x+b.left*plant.h-padding,right:plant.x+b.right*plant.h+padding,
+      top:plant.y+b.top*plant.h-padding,bottom:plant.y+b.bottom*plant.h+padding};
+  }
+  drawPlant(c,plant,time=0,moving=false,alpha=1){
+    const {x,y,h,kind,seed}=plant,sprite=this.sprite(kind,seed),scale=h/sprite.artHeight;
+    c.save();c.translate(x,y);c.scale(scale,scale);c.globalAlpha*=alpha;
+    const rect=[-sprite.anchorX,-sprite.anchorY,sprite.canvas.width,sprite.canvas.height];
+    if(moving){
+      c.drawImage(sprite.trunk,...rect);
+      const sway=Math.sin(time*.73+seed)*.010+Math.sin(time*1.37+seed*3)*.003;
+      c.transform(1,0,sway,1,0,0);c.drawImage(sprite.crown,...rect);
+    }else c.drawImage(sprite.canvas,...rect);
+    c.restore();
+  }
+  rebuild(state,entities){
+    this.trees=[];this.undergrowth=[];
+    const protectedAreas=[
+      {left:-548,right:-394,top:507,bottom:628}, // quarry
+      {left:-64,right:28,top:819,bottom:866} // gathering circle and campfire
+    ];
+    if(state.era==='medieval')protectedAreas.push(
+      {left:-319,right:-251,top:614,bottom:697},{left:-399,right:-331,top:675,bottom:758},
+      {left:-505,right:-355,top:436,bottom:542});
+    if(state.era==='iron')for(const x of [-380,370])protectedAreas.push({left:x-22,right:x+22,top:458,bottom:531});
+    if(state.era==='classical')protectedAreas.push({left:-268,right:-182,top:445,bottom:524});
+    if(state.era==='classical'||state.buildings.aqueduct>0)protectedAreas.push({left:277,right:713,top:420,bottom:590});
+    for(const e of entities)if(e.x>-1800&&e.x<1800&&e.y<1030){
+      protectedAreas.push({left:e.x-30,right:e.x+30,top:e.y-68,bottom:e.y+7});
+    }
+    if(!entities.length){protectedAreas.push({left:-90,right:-30,top:615,bottom:660},{left:-22,right:38,top:679,bottom:730});}
+    const plots=Math.min(7,1+Math.ceil(state.jobs.farmer/3));
+    for(let f=0;f<plots;f++){
+      const x=-310-f%3*70,y=728+Math.floor(f/3)*49;
+      protectedAreas.push({left:x-39,right:x+46,top:y-15,bottom:y+36});
+    }
+    for(const [kind,stage]of Object.entries(state.wonders))if(stage){
+      const [x,y]={megalith:[-190,518],ziggurat:[-72,525],colossus:[122,542],cathedral:[232,552]}[kind];
+      protectedAreas.push({left:x-53,right:x+53,top:y-140,bottom:y+12});
+    }
+    this.protectedAreas=protectedAreas;
+    const overlaps=(a,b)=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
+    const eligible=(plant)=>{
+      const box=this.bounds(plant,4);plant.bounds=box;
+      if(protectedAreas.some(area=>overlaps(box,area)))return false;
+      // Check the full projected crown against water and the three roads.
+      for(let y=Math.max(540,box.top);y<=Math.min(1080,box.bottom);y+=5){
+        const rx=riverX(y),rw=riverWidth(y)+12;
+        if(box.left<rx+rw&&box.right>rx-rw)return false;
+      }
+      const roadLeft=Math.max(-760,box.left),roadRight=Math.min(800,box.right);
+      if(roadLeft<=roadRight)for(let row=0;row<3;row++){
+        const ys=[roadY(row,roadLeft)+4,roadY(row,roadRight)+4,roadY(row,clamp(0,roadLeft,roadRight))+4];
+        if(box.top<Math.max(...ys)+10&&box.bottom>Math.min(...ys)-10)return false;
+      }
+      return true;
+    };
+    // Stable world cells, filtered by broad ecological groves. Viewport width
+    // never participates in these addresses or in the clearing decisions.
+    const groves=[[-665,620,390,130,.95],[685,605,340,130,.9],[-820,879,460,180,.95],[850,872,460,185,.95],[-235,922,190,82,.56]];
+    for(let row=0;row<14;row++)for(let column=-57;column<=57;column++){
+      const seed=(column+61)*7919+row*131+807,x=column*30+(rand(seed)-.5)*26,y=565+row*29+(rand(seed+11)-.5)*23;
+      let density=0;
+      for(const [gx,gy,rx,ry,strength]of groves)density=Math.max(density,Math.exp(-Math.pow((x-gx)/rx,2)-Math.pow((y-gy)/ry,2))*strength);
+      density*=.62+rockNoise(x*.008,y*.009,311)*.6;
+      if(rand(seed+30)>density*.78)continue;
+      const kind=this.species[Math.floor(rand(seed+51)*this.species.length)];
+      const h=30+rand(seed+71)*67+(y-565)*.025;
+      const plant={x,y,h,kind,seed,id:`woodland:${column}:${row}`};
+      if(eligible(plant))this.trees.push(plant);
+      // The understory is shorter and can occupy sheltered gaps between trees.
+      if(rand(seed+88)>.47){
+        const small={x:x+12,y:y+7,h:13+rand(seed+29)*15,kind:rand(seed+22)>.5?'fern':'shrub',seed:seed+100,id:`understory:${column}:${row}`};
+        if(eligible(small))this.undergrowth.push(small);
+      }
+    }
+    // Riparian rushes grow on the dry banks, never in the river channel.
+    for(let j=0;j<38;j++){
+      const y=583+j*11,side=j%2?1:-1,seed=j*157+901;
+      const x=riverX(y)+side*(riverWidth(y)+23+rand(seed)*12);
+      const plant={x,y,h:13+rand(seed+3)*15,kind:'reed',seed,id:`bank:${j}`};
+      if(eligible(plant))this.undergrowth.push(plant);
+    }
+    this.trees.sort((a,b)=>a.y-b.y||a.x-b.x);
+    this.undergrowth.sort((a,b)=>a.y-b.y||a.x-b.x);
+  }
+  paintDistant(c,left,right){
+    for(let band=0;band<2;band++)for(let cell=Math.floor((left-40)/17);cell<=Math.ceil((right+40)/17);cell++){
+      const seed=(cell+250)*371+band*1313,x=cell*17+(rand(seed)-.5)*14;
+      const openness=rockNoise(x*.006,band*3,71);
+      if(rand(seed+6)>openness*.75+.2)continue;
+      const y=506+Math.sin(x*.006)*24+Math.sin(x*.013+2)*13+band*7+5;
+      const kind=this.species[rand(seed+3)>.2?0:Math.floor(rand(seed+4)*this.species.length)];
+      this.drawPlant(c,{x,y,h:12+rand(seed+9)*24+band*7,kind,seed},0,false,band?.84:.48);
+    }
+  }
+  paintWoodland(c,left,right){
+    const plants=[...this.trees,...this.undergrowth].sort((a,b)=>a.y-b.y||a.x-b.x);
+    for(const plant of plants){
+      const radius=this.radius(plant.kind,plant.h);
+      if(plant.x+radius<left||plant.x-radius>right)continue;
+      if(!['fern','shrub','reed'].includes(plant.kind)){
+        c.save();c.globalAlpha=.14;
+        ellipse(c,plant.x+plant.h*.11,plant.y+1,plant.h*.25,plant.h*.045,this.tones.shadow);c.restore();
+      }
+      this.drawPlant(c,plant);
+    }
+  }
+  paintForeground(c,half,time){
+    const near=this.species[0];
+    for(const side of [-1,1]){
+      const seed=side>0?801:417;
+      this.drawPlant(c,{x:side*(half+8),y:1040,h:230+rand(seed)*65,kind:near,seed},time,true,.94);
+      this.drawPlant(c,{x:side*(half-55),y:1015,h:67+rand(seed+4)*35,kind:'shrub',seed:seed+4},time,true);
+      for(let j=0;j<3;j++)this.drawPlant(c,{x:side*(half-21-j*25),y:1010+j*7,h:40+rand(seed+j+18)*33,kind:'fern',seed:seed+j+20},time,true);
+    }
+    for(let j=0;j<15;j++){
+      const x=-half+rand(j*157+131)*half*2,y=987+rand(j+67)*39;
+      this.drawPlant(c,{x,y,h:24+rand(j+18)*31,kind:j%4?'reed':'fern',seed:j*213+9},time,true,.9);
+    }
+    if(this.paper)for(let j=0;j<9;j++){
+      const x=Math.sin(time*.035+j*31)*half,y=790+rand(j+801)*190-Math.sin(time*.13+j)*12;
+      c.save();c.translate(x,y);c.rotate(time*.11+j);c.globalAlpha=.27;
+      poly(c,[[-1.8,0],[0,-.7],[2,0],[0,.9]],this.tones.light);c.restore();
+    }
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -500,7 +808,7 @@ export class WorldBackdropRenderer {
   resume(){if(this.destroyed)return;this.paused=false;this._last=null;this._schedule();}
   seek(seconds){this.time=Number.isFinite(Number(seconds))?Math.max(0,Number(seconds)):0;this._last=null;this.draw();}
   replay(){this.seek(0);this.resume();}
-  destroy(){this.destroyed=true;this._cancel();this._stopMountainBake();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];this.mountains=null;}
+  destroy(){this.destroyed=true;this._cancel();this._stopMountainBake();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];this.mountains=null;this.vegetation=null;}
   async enableGyroscope(){
     if(this.destroyed||!this.ctx||typeof DeviceOrientationEvent==='undefined')return false;
     try {
@@ -558,6 +866,12 @@ export class WorldBackdropRenderer {
       this._landscapeKey=landscapeKey;
       this._startMountainBake(options,this.mountains);
     }
+    const vegetationKey=JSON.stringify([this.state.era,this.state.paperMode]);
+    if(this._vegetationKey!==vegetationKey){
+      this.vegetation=new VegetationLayer(this.state.era,this.state.paperMode);
+      this._vegetationKey=vegetationKey;
+    }
+    this.vegetation.rebuild(this.state,this.entities);
     this.layers=[];
     for(let i=0;i<7;i++) {
       if(i<4&&reuseLandscape&&previous[i]){this.layers.push(previous[i]);continue;}
@@ -659,10 +973,7 @@ export class WorldBackdropRenderer {
       const pts=[[left,h],[left,550]];
       for(let x=left;x<=right+30;x+=30)pts.push([x,506+Math.sin(x*.006)*24+Math.sin(x*.013+2)*13]);
       pts.push([right,h]);poly(c,pts,p[5]);
-      for(let n=0;n<160;n++){
-        const x=left+rand(n+200)*(right-left),y=507+Math.sin(x*.006)*24+Math.sin(x*.013+2)*13;
-        tree(c,x,y,12+rand(n+440)*29,p,n,s.era==='classical'?'cypress':'pine');
-      }
+      this.vegetation.paintDistant(c,left,right);
       this._wonders(c,0);
       if(s.era==='iron')for(const x of [-380,370])this._watchtower(c,x,518);
       if(s.era==='medieval')this._castle(c,-430,530);
@@ -687,10 +998,7 @@ export class WorldBackdropRenderer {
         c.globalAlpha=.05+rand(n)*.10;line(c,[[x,y],[x+2+rand(n+8)*8,y-.4]],n%3?p[11]:p[14],.7);
       }c.globalAlpha=1;
       this._quarry(c,-470,610);
-      for(let n=0;n<100;n++) {
-        const side=n%2?1:-1,x=side*(340+rand(n+45)*900),y=570+rand(n+62)*300;
-        tree(c,x,y,24+rand(n+88)*70,p,n,s.era==='classical'?'cypress':s.era==='bronze'?'oak':'pine');
-      }
+      this.vegetation.paintWoodland(c,left,right);
       this._fields(c,0,false);c.restore();
       // Thin irregular, reflective banks.
       for(const side of [-1,1]) {const pts=[];for(let y=540;y<1100;y+=6)pts.push([riverX(y)+side*(riverWidth(y)+2),y]);line(c,pts,p[5],5);line(c,pts,p[12],.7);}
@@ -1035,16 +1343,7 @@ export class WorldBackdropRenderer {
     const pts=[[left,1100],[left,956]];
     for(let x=left;x<=right+20;x+=20)pts.push([x,962+Math.sin(x*.008)*16+Math.sin(x*.021)*6]);
     pts.push([right,1100]);poly(c,pts,p[7]);
-    for(let n=0;n<28;n++){
-      const side=n%2?1:-1,x=side*(this.half-25+rand(n+18)*100),y=1010+rand(n+40)*90;
-      tree(c,x,y,100+rand(n+7)*160,p,n,s.era==='classical'?'cypress':'pine',t);
-    }
-    // Reeds and fine grass at the near bank; world-space widths stay isotropic.
-    for(let n=0;n<110;n++){
-      const x=left+rand(n+205)*(right-left),y=970+Math.sin(x*.008)*16+rand(n+19)*60;
-      const h=5+rand(n)*23,sway=Math.sin(t*.9+n)*h*.09;
-      line(c,[[x,y],[x+sway,y-h]],n%5?p[10]:p[11],.8);
-    }
+    this.vegetation.paintForeground(c,this.half,t);
     if(!s.paperMode)for(let n=0;n<33;n++){
       const x=Math.sin(t*.08+n*7)*this.half,y=760+rand(n+90)*220+Math.sin(t*.3+n)*8;
       const alpha=.15+Math.pow(Math.sin(t*.65+n),4)*.45;

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Idlenomics — Mountain & atmosphere study</title>
+  <title>Idlenomics — Environment studies</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #10191e; color: #eee9dc; font: 14px/1.5 system-ui,sans-serif; }
@@ -32,16 +32,16 @@
 </head>
 <body>
   <header>
-    <div><span class="eyebrow">Idlenomics · Environment study 01</span><h1>Mountains & atmosphere</h1></div>
+    <div><span class="eyebrow" id="eyebrow">Idlenomics · Environment study 02</span><h1 id="study-title">Vegetation & woodland</h1></div>
     <div class="controls" aria-label="Preview controls">
       <div class="group"><select id="era" aria-label="Era"><option value="stone">Stone Age</option><option value="bronze" selected>Bronze Age</option><option value="iron">Iron Age</option><option value="classical">Classical Age</option><option value="medieval">Medieval Age</option></select></div>
       <div class="group" aria-label="Lighting"><button id="night" aria-pressed="false">Dusk</button><button id="day" aria-pressed="true">Daylight</button></div>
-      <div class="group" aria-label="View"><button id="mountains" aria-pressed="true">Mountains only</button><button id="scene" aria-pressed="false">Full scene</button></div>
+      <div class="group" aria-label="View"><button id="mountains" aria-pressed="false">Mountains</button><button id="vegetation" aria-pressed="true">Vegetation</button><button id="scene" aria-pressed="false">Full scene</button></div>
       <div class="group"><button id="motion" aria-pressed="false">Play motion</button></div>
     </div>
   </header>
-  <main><figure><canvas id="study-output" role="img" aria-label="Isolated mountain and atmosphere preview"></canvas><figcaption id="caption">Composed ridgelines · branching gullies · directional rock lighting · distant haze</figcaption></figure></main>
-  <footer><p>This study isolates the mountain ranges and atmosphere. Switch to the full scene to check their scale and contrast behind the settlement.</p><p>Space: pause or play · <a href="./">Return to the game</a></p></footer>
+  <main><figure><canvas id="study-output" role="img" aria-label="Isolated vegetation preview"></canvas><figcaption id="caption">Branch structure · leaf texture · species variations · wind</figcaption></figure></main>
+  <footer><p>Inspect each component separately, then switch to the full scene to judge forest clusters, clearings, scale, and contrast around the settlement.</p><p>Space: pause or play · <a href="./">Return to the game</a></p></footer>
   <canvas id="world-bg-canvas" aria-hidden="true"></canvas>
   <script type="module">
     import { WorldBackdropRenderer } from './world-canvas.js';
@@ -53,17 +53,18 @@
     const params = new URLSearchParams(location.search);
     let era = ['stone','bronze','iron','classical','medieval'].includes(params.get('era')) ? params.get('era') : 'bronze';
     let paper = params.get('mode') !== 'dusk';
-    let wholeScene = params.get('view') === 'scene';
+    let view = ['mountains','vegetation','scene'].includes(params.get('view')) ? params.get('view') : 'vegetation';
     let playing = false, time = 12, last = null, raf = 0;
     const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-    const controls = Object.fromEntries(['era','day','night','mountains','scene','motion','caption'].map(id => [id,document.getElementById(id)]));
+    const controls = Object.fromEntries(['era','day','night','mountains','vegetation','scene','motion','caption','study-title','eyebrow'].map(id => [id,document.getElementById(id)]));
     function synchronize() {
       controls.era.value = era;
-      for(const [id,active] of [['day',paper],['night',!paper],['mountains',!wholeScene],['scene',wholeScene],['motion',playing]]) controls[id].setAttribute('aria-pressed',String(active));
+      for(const [id,active] of [['day',paper],['night',!paper],['mountains',view==='mountains'],['vegetation',view==='vegetation'],['scene',view==='scene'],['motion',playing]]) controls[id].setAttribute('aria-pressed',String(active));
       controls.motion.textContent = playing ? 'Pause motion' : 'Play motion';
-      controls.caption.textContent = wholeScene ? 'Integration view · mountains and atmosphere behind the existing settlement' : 'Composed ridgelines · branching gullies · directional rock lighting · distant haze';
-      output.setAttribute('aria-label',`${era} age ${paper?'daylight':'dusk'} ${wholeScene?'settlement scene':'mountain and atmosphere study'}`);
-      const query = new URLSearchParams({era,mode:paper?'day':'dusk',view:wholeScene?'scene':'mountains'});
+      controls['study-title'].textContent = view==='vegetation' ? 'Vegetation & woodland' : view==='mountains' ? 'Mountains & atmosphere' : 'The living valley';
+      controls.eyebrow.textContent = `Idlenomics · ${view==='vegetation'?'Environment study 02':view==='mountains'?'Environment study 01':'Integration view'}`;
+      output.setAttribute('aria-label',`${era} age ${paper?'daylight':'dusk'} ${view==='scene'?'settlement scene':view==='vegetation'?'vegetation study':'mountain and atmosphere study'}`);
+      const query = new URLSearchParams({era,mode:paper?'day':'dusk',view});
       history.replaceState(null,'',`?${query}`);
     }
     function update() {
@@ -74,13 +75,16 @@
       synchronize(); paint();
     }
     function paint() {
-      output.setAttribute('aria-busy',String(!renderer.mountains.ready));
-      controls.caption.textContent = renderer.mountains.ready
-        ? (wholeScene ? 'Integration view · mountains and atmosphere behind the existing settlement' : 'Composed ridgelines · branching gullies · directional rock lighting · distant haze')
-        : 'Preparing this landscape…';
+      const waiting=view!=='vegetation'&&!renderer.mountains.ready;
+      output.setAttribute('aria-busy',String(waiting));
+      controls.caption.textContent = waiting ? 'Preparing this landscape…'
+        : view==='vegetation' ? 'Branch structure · leaf texture · species variations · wind'
+        : view==='scene' ? 'Integration view · woodland groves, cultivated clearings, riverbanks and foreground foliage'
+        : 'Composed ridgelines · branching gullies · directional rock lighting · distant haze';
       renderer.time = time;
       renderer.reducedMotion = reduced.matches && !playing;
-      if (wholeScene) renderer.draw();
+      if(view==='scene')renderer.draw();
+      else if(view==='vegetation')paintVegetation(renderer.reducedMotion?0:time);
       else {
         const c=renderer.ctx;
         c.setTransform(renderer.dpr,0,0,renderer.dpr,0,0);
@@ -91,10 +95,39 @@
         }
         renderer._plane(3,cc=>renderer.mountains.paintMist(cc,renderer.reducedMotion?0:time));
       }
-      const height = wholeScene ? source.height : Math.min(source.height,Math.round(source.height*565/renderer.worldHeight));
+      const worldCrop=view==='scene'?renderer.worldHeight:view==='vegetation'?galleryHeight:565;
+      const height=Math.min(source.height,Math.round(source.height*worldCrop/renderer.worldHeight));
       if(output.width!==source.width)output.width=source.width;
       if(output.height!==height)output.height=height;
       ctx.drawImage(source,0,0,source.width,height,0,0,output.width,output.height);
+    }
+    let galleryHeight=720;
+    function paintVegetation(t) {
+      const c=renderer.ctx,v=renderer.vegetation,half=renderer.half;
+      c.setTransform(renderer.dpr*renderer.scale,0,0,renderer.dpr*renderer.scale,renderer.dpr*renderer.width/2,0);
+      c.globalAlpha=1;
+      const narrow=renderer.width<650,columns=narrow?2:3,cell=half*2/columns;
+      const size=Math.min(310,cell*.87),rowHeight=size+65,root=80+size;
+      const species=[...new Set(v.species)];
+      const rows=Math.ceil(species.length/columns),underY=root+(rows-1)*rowHeight+170;
+      galleryHeight=Math.min(renderer.worldHeight,underY+70);
+      const sky=c.createLinearGradient(0,0,0,galleryHeight);
+      sky.addColorStop(0,paper?'#cdd4bf':'#344a50');sky.addColorStop(1,paper?'#9eae8b':'#20383b');
+      c.fillStyle=sky;c.fillRect(-half,0,half*2,renderer.worldHeight);
+      c.textAlign='center';c.font='15px system-ui,sans-serif';c.fillStyle=paper?'#405846':'#c2ccc1';
+      species.forEach((kind,i)=>{
+        const x=-half+cell*(i%columns+.5),y=root+Math.floor(i/columns)*rowHeight;
+        c.save();c.globalAlpha=.16;c.fillStyle=v.tones.shadow;c.beginPath();c.ellipse(x,y+2,size*.35,size*.045,0,0,Math.PI*2);c.fill();c.restore();
+        v.drawPlant(c,{x:x+size*.2,y:y-3,h:size*.61,kind,seed:47+i*101},t,true);
+        v.drawPlant(c,{x:x-size*.08,y,h:size,kind,seed:17+i*157},t,true);
+        c.fillStyle=paper?'#405846':'#c2ccc1';c.fillText(kind[0].toUpperCase()+kind.slice(1),x,y+31);
+      });
+      const under=['fern','shrub','reed'];
+      under.forEach((kind,i)=>{
+        const x=-half+half*2*(i+.5)/3;
+        v.drawPlant(c,{x,y:underY,h:Math.min(102,half*.32),kind,seed:71+i*101},t,true);
+        c.fillStyle=paper?'#405846':'#c2ccc1';c.fillText(['Fern','Woodland shrub','River reeds'][i],x,underY+27);
+      });
     }
     function tick(now) {
       raf=0;
@@ -110,8 +143,9 @@
     controls.era.addEventListener('change',e=>{era=e.target.value;update();});
     controls.day.addEventListener('click',()=>{paper=true;update();});
     controls.night.addEventListener('click',()=>{paper=false;update();});
-    controls.mountains.addEventListener('click',()=>{wholeScene=false;update();});
-    controls.scene.addEventListener('click',()=>{wholeScene=true;update();});
+    controls.mountains.addEventListener('click',()=>{view='mountains';update();});
+    controls.vegetation.addEventListener('click',()=>{view='vegetation';update();});
+    controls.scene.addEventListener('click',()=>{view='scene';update();});
     controls.motion.addEventListener('click',toggle);
     document.addEventListener('keydown',e=>{if(e.code==='Space'&&!['BUTTON','SELECT','INPUT'].includes(document.activeElement.tagName)){e.preventDefault();toggle();}});
     window.addEventListener('resize',paint);
