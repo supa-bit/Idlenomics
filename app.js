@@ -782,6 +782,16 @@ function switchTab(tabId) {
 /* INTERACTIVE TUTORIAL SYSTEM */
 const TUTORIAL_STEPS = [
   {
+    badge: 'WELCOME GREETING',
+    title: 'Hello & Welcome to Idlenomics!',
+    body: 'Your nomadic band has just settled beside a sheltered river valley at the dawn of the Stone Age. Together, we will guide your fledgling camp into a thriving civilization across the ages.',
+    hint: 'Tap "Start Tour →" below for a quick walkthrough of your controls!',
+    nextLabel: 'Start Tour →',
+    tab: 'tab-settlement',
+    selector: '#civ-stage-banner'
+  },
+  {
+    badge: 'STEP 1 OF 6',
     title: '1. Resource Ledger & Net Rates',
     body: 'This top ledger tracks your stockpiles, storage caps, and per-second production rates. Each citizen consumes 0.5 Food/s—1 Farmer is already pre-assigned so your Food grows steadily.',
     hint: 'Tip: Watch your +Food/s and +Wood/s rates in green.',
@@ -789,6 +799,7 @@ const TUTORIAL_STEPS = [
     selector: '#resource-ledger'
   },
   {
+    badge: 'STEP 2 OF 6',
     title: '2. Manual Gathering',
     body: 'Touch any gathering button to collect raw materials by hand. Early in the Stone Age, manual foraging gives you a quick burst of Food, Wood, Hide, and Stone.',
     hint: 'Action: Tap "Forage Roots" (or press Next) to continue!',
@@ -796,6 +807,7 @@ const TUTORIAL_STEPS = [
     selector: 'button[data-gather="forage_food"]'
   },
   {
+    badge: 'STEP 3 OF 6',
     title: '3. Population & Labor Assignment',
     body: 'Your settlement starts with 3 Citizens (1 Farmer, 2 Idle). Assign idle citizens to Woodcutter or Stonecutter so resources accumulate automatically while you are away.',
     hint: 'Action: Tap "+1" on Woodcutter or Farmer to assign an idle worker!',
@@ -803,6 +815,7 @@ const TUTORIAL_STEPS = [
     selector: 'button[data-job-add="woodcutter"]'
   },
   {
+    badge: 'STEP 4 OF 6',
     title: '4. Structures & Settlement Growth',
     body: 'Structures provide passive production and raise your Population & Storage Caps. As you construct buildings and advance eras, the settlement landscape banner at the top visually evolves!',
     hint: 'Gather Wood & Stone to construct Shelters, Camps, and Timber Yards.',
@@ -810,6 +823,7 @@ const TUTORIAL_STEPS = [
     selector: '#building-list'
   },
   {
+    badge: 'STEP 5 OF 6',
     title: '5. Technologies, Crafting & Eras',
     body: 'Open the Craft & Tech tab to research breakthroughs like Oral Tradition and Flint Toolmaking. Researching Era milestones advances your civilization into the Bronze, Iron, Classical, and Medieval Ages.',
     hint: 'Researching "Oral Tradition" (35 Food, 25 Wood) unlocks Science!',
@@ -817,9 +831,11 @@ const TUTORIAL_STEPS = [
     selector: '#tech-list'
   },
   {
+    badge: 'STEP 6 OF 6',
     title: '6. Wonders, Expeditions & Cloud Vault',
     body: 'Explore the World tab to train garrisons, annex territory, and build monumental Wonders. Use the Vault tab anytime to back up your save string or sync 10 cloud snapshots via Supabase.',
     hint: 'You can replay this guide anytime via the "? Guide" button at the top.',
+    nextLabel: 'Finish Guide ✓',
     tab: 'tab-world',
     selector: '#bottom-nav'
   }
@@ -843,7 +859,7 @@ function renderTutorial() {
   const step = TUTORIAL_STEPS[stepIdx];
   layer.classList.remove('hidden');
 
-  document.getElementById('tutorial-step-badge').textContent = `STEP ${stepIdx + 1} OF ${TUTORIAL_STEPS.length}`;
+  document.getElementById('tutorial-step-badge').textContent = step.badge || `STEP ${stepIdx} OF ${TUTORIAL_STEPS.length - 1}`;
   document.getElementById('tutorial-title').textContent = step.title;
   document.getElementById('tutorial-body').textContent = step.body;
   document.getElementById('tutorial-hint').textContent = step.hint;
@@ -852,9 +868,9 @@ function renderTutorial() {
   const nextBtn = document.getElementById('btn-tutorial-next');
   prevBtn.disabled = stepIdx === 0;
   prevBtn.style.opacity = stepIdx === 0 ? '0.4' : '1';
-  nextBtn.textContent = stepIdx === TUTORIAL_STEPS.length - 1 ? 'Finish Guide ✓' : 'Next →';
+  nextBtn.textContent = step.nextLabel || (stepIdx === TUTORIAL_STEPS.length - 1 ? 'Finish Guide ✓' : 'Next →');
 
-  const target = document.querySelector(step.selector);
+  const target = step.selector ? document.querySelector(step.selector) : null;
   const card = document.getElementById('tutorial-card');
   const arrow = document.getElementById('tutorial-arrow');
 
@@ -935,8 +951,8 @@ document.getElementById('workspace').addEventListener('click', (e) => {
         const gain = amt * toolBoost;
         state.resources[resId] = Math.min(caps[resId], (state.resources[resId] || 0) + gain);
       });
-      if (!state.tutorialDone && state.tutorialStep === 1) {
-        state.tutorialStep = 2;
+      if (!state.tutorialDone && state.tutorialStep === 2) {
+        state.tutorialStep = 3;
       }
       renderAll();
       saveLocalState();
@@ -949,8 +965,8 @@ document.getElementById('workspace').addEventListener('click', (e) => {
     const jId = btn.dataset.jobAdd;
     if (state.pop - getAssignedPop() > 0) {
       state.jobs[jId] = (state.jobs[jId] || 0) + 1;
-      if (!state.tutorialDone && state.tutorialStep === 2) {
-        state.tutorialStep = 3;
+      if (!state.tutorialDone && state.tutorialStep === 3) {
+        state.tutorialStep = 4;
       }
       renderAll();
       saveLocalState();
