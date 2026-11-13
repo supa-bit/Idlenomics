@@ -10,21 +10,31 @@
   <meta name="format-detection" content="telephone=no" />
   <title>Idlenomics — Eco-Brutalist Civilization</title>
   <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body data-era="stone">
   <div id="app-shell">
     <!-- TOP STATUS & RESOURCE LEDGER -->
     <header id="top-bar">
       <div class="era-strip">
-        <div>
+        <div class="era-title-group">
           <span class="label-muted">ERA:</span>
           <strong id="era-title">Stone Age</strong>
           <span id="offline-badge" class="badge-inline hidden"></span>
         </div>
         <div class="header-controls">
+          <button id="btn-tutorial" class="btn-small accent-teal" type="button" aria-label="Open Tutorial Guide">? Guide</button>
           <button id="btn-theme" class="btn-small" type="button" aria-label="Toggle Paper Mode">Paper Mode</button>
         </div>
+      </div>
+
+      <!-- EVOLVING ERA LANDSCAPE & SETTLEMENT SKYLINE -->
+      <div id="civ-stage-banner" class="civ-stage-banner" aria-hidden="true">
+        <div id="civ-stage-art" class="civ-stage-art"></div>
+        <div id="civ-stage-caption" class="civ-stage-caption">Nomadic Riverbank Camp</div>
       </div>
 
       <!-- Resource Grid -->
@@ -190,6 +200,24 @@
       <button class="nav-btn" data-tab="tab-chronicle" type="button">Chronicle</button>
       <button class="nav-btn" data-tab="tab-vault" type="button">Vault</button>
     </nav>
+
+    <!-- INTERACTIVE TUTORIAL POPOVER & POINTER -->
+    <div id="tutorial-layer" class="tutorial-layer hidden" role="dialog" aria-live="polite" aria-label="Interactive Tutorial">
+      <div id="tutorial-card" class="tutorial-card">
+        <div id="tutorial-arrow" class="tutorial-arrow"></div>
+        <div class="tutorial-card-head">
+          <span id="tutorial-step-badge" class="tutorial-step-badge">STEP 1 OF 6</span>
+          <button id="btn-tutorial-skip" class="tutorial-skip-btn" type="button">Skip Guide</button>
+        </div>
+        <h3 id="tutorial-title" class="tutorial-title">Welcome to Idlenomics</h3>
+        <p id="tutorial-body" class="tutorial-body"></p>
+        <div id="tutorial-hint" class="tutorial-hint"></div>
+        <div class="tutorial-card-foot">
+          <button id="btn-tutorial-prev" class="btn-small" type="button">Back</button>
+          <button id="btn-tutorial-next" class="btn-small accent-moss" type="button">Next →</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="app.js"></script>

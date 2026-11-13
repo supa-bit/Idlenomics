@@ -54,6 +54,8 @@ function createDefaultState() {
     units,
     expeditionsCleared: 0,
     activeEvent: null,
+    tutorialDone: false,
+    tutorialStep: 0,
     logs: [
       { time: 'Year 1', msg: 'Your nomadic band settles beside a sheltered river valley.' }
     ]
@@ -330,10 +332,149 @@ function checkOfflineProgress() {
 }
 
 /* RENDER UI (CALM 1-SECOND HEARTBEAT) */
+function renderCivStageBanner() {
+  const artEl = document.getElementById('civ-stage-art');
+  const capEl = document.getElementById('civ-stage-caption');
+  if (!artEl || !capEl) return;
+
+  const era = state.era || 'stone';
+  const techCount = state.techs.length;
+  const totalBuildings = Object.values(state.buildings).reduce((a, b) => a + b, 0);
+  const totalWonders = Object.values(state.wonders).reduce((a, b) => a + b, 0);
+
+  const eraPalettes = {
+    stone: { sky1: '#233829', sky2: '#152219', hill1: '#2E4633', hill2: '#223326', river: '#3B7A78', sun: '#F0B45B' },
+    bronze: { sky1: '#422E1E', sky2: '#241911', hill1: '#573D28', hill2: '#3B291B', river: '#4A8986', sun: '#F6C163' },
+    iron: { sky1: '#273547', sky2: '#161E29', hill1: '#37485E', hill2: '#253242', river: '#5299A3', sun: '#E8A86B' },
+    classical: { sky1: '#313552', sky2: '#1C1E30', hill1: '#45496E', hill2: '#2E314B', river: '#5DA9B8', sun: '#F7D37E' },
+    medieval: { sky1: '#3A284F', sky2: '#1F162B', hill1: '#4F386B', hill2: '#342447', river: '#64B2C4', sun: '#F2BC6E' }
+  };
+  const pal = eraPalettes[era] || eraPalettes.stone;
+
+  // Determine settlement evolution caption
+  let stageLabel = 'Nomadic Riverbank Camp';
+  if (era === 'stone') {
+    if (techCount >= 3 || totalBuildings >= 3) stageLabel = 'Neolithic Timber Village';
+    else if (techCount >= 1 || totalBuildings >= 1) stageLabel = 'Fledgling Hearth Settlement';
+  } else if (era === 'bronze') {
+    stageLabel = totalBuildings >= 5 ? 'Walled Bronze Citadel' : 'Smelting River Township';
+  } else if (era === 'iron') {
+    stageLabel = totalWonders >= 1 ? 'Monumental Iron Stronghold' : 'Forged Iron Bastion';
+  } else if (era === 'classical') {
+    stageLabel = 'Marble Aqueduct Metropolis';
+  } else if (era === 'medieval') {
+    stageLabel = totalWonders >= 3 ? 'Grand Sovereign Realm' : 'High Feudal Trade Capital';
+  }
+  capEl.textContent = `${stageLabel} • ${state.pop} Citizens • ${techCount} Techs`;
+
+  // Dynamic elements that appear as the player builds & researches
+  const huts = Math.min(5, Math.max(1, (state.buildings.hide_tent || 0) + (state.buildings.forager_hut || 0) + 1));
+  const houses = Math.min(4, (state.buildings.mud_brick_hut || 0) + (state.buildings.granary || 0));
+  const kilns = (state.buildings.smeltery || 0) + (state.buildings.copper_mine || 0);
+  const hasAqueduct = (state.buildings.aqueduct || 0) > 0 || era === 'classical' || era === 'medieval';
+  const hasGuild = (state.buildings.guild_hall || 0) > 0 || era === 'medieval';
+  const hasStars = state.techs.includes('oral_tradition');
+  const hasMegalith = (state.wonders.megalith || 0) > 0 || state.techs.includes('masonry');
+  const hasZiggurat = (state.wonders.ziggurat || 0) > 0;
+  const hasColossus = (state.wonders.colossus || 0) > 0;
+  const hasCathedral = (state.wonders.cathedral || 0) > 0;
+
+  let structuresSvg = '';
+
+  // Campfire & Stone Age tents
+  structuresSvg += `<polygon points="75,48 85,32 95,48" fill="#B88456" stroke="#F2EFE6" stroke-width="0.8"/>`;
+  if (huts >= 2) structuresSvg += `<polygon points="102,48 111,34 120,48" fill="#A6754B" stroke="#F2EFE6" stroke-width="0.7"/>`;
+  if (huts >= 3) structuresSvg += `<polygon points="52,49 60,36 68,49" fill="#9E6D44" stroke="#F2EFE6" stroke-width="0.7"/>`;
+
+  // Hearth fire glow
+  structuresSvg += `<circle cx="98" cy="47" r="3" fill="#F0B45B"/><circle cx="98" cy="47" r="6" fill="#F0B45B" opacity="0.28"/>`;
+
+  // Granaries & Mudbrick Houses as player builds
+  if (houses >= 1 || totalBuildings >= 2) {
+    structuresSvg += `<rect x="135" y="36" width="18" height="12" fill="#C99366" stroke="#F2EFE6" stroke-width="0.7"/>`;
+    structuresSvg += `<polygon points="133,36 144,29 155,36" fill="#8C583A"/>`;
+  }
+  if (houses >= 2 || totalBuildings >= 4) {
+    structuresSvg += `<rect x="158" y="34" width="20" height="14" fill="#D4A074" stroke="#F2EFE6" stroke-width="0.7"/>`;
+  }
+
+  // Smeltery chimneys & smoke in Bronze/Iron age
+  if (kilns > 0 || getEraOrder(era) >= 1) {
+    structuresSvg += `<rect x="190" y="28" width="12" height="20" fill="#7D5A46" stroke="#F2EFE6" stroke-width="0.7"/>`;
+    structuresSvg += `<circle cx="196" cy="22" r="3.5" fill="#D6D2C8" opacity="0.45"/>`;
+    structuresSvg += `<circle cx="201" cy="16" r="4.5" fill="#D6D2C8" opacity="0.3"/>`;
+  }
+
+  // Megalithic Standing Stones
+  if (hasMegalith) {
+    structuresSvg += `
+      <rect x="25" y="33" width="5" height="15" fill="#9BA69E"/>
+      <rect x="36" y="33" width="5" height="15" fill="#9BA69E"/>
+      <rect x="23" y="30" width="20" height="4" fill="#B6C0B8"/>
+    `;
+  }
+
+  // Ziggurat
+  if (hasZiggurat) {
+    structuresSvg += `
+      <rect x="220" y="38" width="38" height="10" fill="#C99255"/>
+      <rect x="226" y="30" width="26" height="8" fill="#DDA666"/>
+      <rect x="232" y="23" width="14" height="7" fill="#F0B45B"/>
+    `;
+  }
+
+  // Classical Aqueduct arches
+  if (hasAqueduct) {
+    structuresSvg += `
+      <rect x="268" y="26" width="75" height="4" fill="#D8D2C5"/>
+      <rect x="272" y="30" width="5" height="18" fill="#C2B9A7"/>
+      <rect x="292" y="30" width="5" height="18" fill="#C2B9A7"/>
+      <rect x="312" y="30" width="5" height="18" fill="#C2B9A7"/>
+      <rect x="332" y="30" width="5" height="18" fill="#C2B9A7"/>
+    `;
+  }
+
+  // Harbor Colossus / Guild Spires / Cathedral
+  if (hasColossus) {
+    structuresSvg += `<polygon points="365,48 370,18 375,48" fill="#F0B45B"/><circle cx="370" cy="15" r="3.5" fill="#F7D37E"/>`;
+  }
+  if (hasGuild || hasCathedral) {
+    structuresSvg += `
+      <rect x="388" y="26" width="26" height="22" fill="#8E7CA6" stroke="#F2EFE6" stroke-width="0.7"/>
+      <polygon points="388,26 401,10 414,26" fill="#B8A4D4"/>
+    `;
+  }
+
+  const starsSvg = hasStars
+    ? `<circle cx="45" cy="12" r="1.3" fill="#FFF"/><circle cx="115" cy="9" r="1.5" fill="#F7D37E"/><circle cx="170" cy="14" r="1.2" fill="#FFF"/><circle cx="290" cy="10" r="1.4" fill="#FFF"/>`
+    : '';
+
+  artEl.innerHTML = `
+    <svg viewBox="0 0 460 56" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${pal.sky1}" />
+          <stop offset="100%" stop-color="${pal.sky2}" />
+        </linearGradient>
+      </defs>
+      <rect width="460" height="56" fill="url(#skyGrad)" />
+      ${starsSvg}
+      <circle cx="425" cy="16" r="9" fill="${pal.sun}" opacity="0.88" />
+      <circle cx="425" cy="16" r="15" fill="${pal.sun}" opacity="0.18" />
+      <path d="M0,44 Q90,24 195,40 T390,34 L460,42 L460,56 L0,56 Z" fill="${pal.hill1}" />
+      <path d="M0,48 Q140,36 270,47 T460,45 L460,56 L0,56 Z" fill="${pal.hill2}" />
+      <path d="M0,52 Q220,46 460,53 L460,56 L0,56 Z" fill="${pal.river}" opacity="0.85" />
+      ${structuresSvg}
+    </svg>
+  `;
+}
+
 function renderHeader() {
   const eraObj = ERAS.find((e) => e.id === state.era) || ERAS[0];
   document.getElementById('era-title').textContent = eraObj.name;
+  document.body.dataset.era = state.era || 'stone';
   document.body.classList.toggle('paper-mode', Boolean(state.paperMode));
+  renderCivStageBanner();
 
   const caps = getResourceCaps();
   const rates = getNetRates();
@@ -629,6 +770,146 @@ function renderChronicleTab() {
     .join('');
 }
 
+function switchTab(tabId) {
+  document.querySelectorAll('.nav-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === tabId);
+  });
+  document.querySelectorAll('.tab-panel').forEach((p) => {
+    p.classList.toggle('active', p.id === tabId);
+  });
+}
+
+/* INTERACTIVE TUTORIAL SYSTEM */
+const TUTORIAL_STEPS = [
+  {
+    title: '1. Resource Ledger & Net Rates',
+    body: 'This top ledger tracks your stockpiles, storage caps, and per-second production rates. Each citizen consumes 0.5 Food/s—1 Farmer is already pre-assigned so your Food grows steadily.',
+    hint: 'Tip: Watch your +Food/s and +Wood/s rates in green.',
+    tab: 'tab-settlement',
+    selector: '#resource-ledger'
+  },
+  {
+    title: '2. Manual Gathering',
+    body: 'Touch any gathering button to collect raw materials by hand. Early in the Stone Age, manual foraging gives you a quick burst of Food, Wood, Hide, and Stone.',
+    hint: 'Action: Tap "Forage Roots" (or press Next) to continue!',
+    tab: 'tab-settlement',
+    selector: 'button[data-gather="forage_food"]'
+  },
+  {
+    title: '3. Population & Labor Assignment',
+    body: 'Your settlement starts with 3 Citizens (1 Farmer, 2 Idle). Assign idle citizens to Woodcutter or Stonecutter so resources accumulate automatically while you are away.',
+    hint: 'Action: Tap "+1" on Woodcutter or Farmer to assign an idle worker!',
+    tab: 'tab-settlement',
+    selector: 'button[data-job-add="woodcutter"]'
+  },
+  {
+    title: '4. Structures & Settlement Growth',
+    body: 'Structures provide passive production and raise your Population & Storage Caps. As you construct buildings and advance eras, the settlement landscape banner at the top visually evolves!',
+    hint: 'Gather Wood & Stone to construct Shelters, Camps, and Timber Yards.',
+    tab: 'tab-settlement',
+    selector: '#building-list'
+  },
+  {
+    title: '5. Technologies, Crafting & Eras',
+    body: 'Open the Craft & Tech tab to research breakthroughs like Oral Tradition and Flint Toolmaking. Researching Era milestones advances your civilization into the Bronze, Iron, Classical, and Medieval Ages.',
+    hint: 'Researching "Oral Tradition" (35 Food, 25 Wood) unlocks Science!',
+    tab: 'tab-craft',
+    selector: '#tech-list'
+  },
+  {
+    title: '6. Wonders, Expeditions & Cloud Vault',
+    body: 'Explore the World tab to train garrisons, annex territory, and build monumental Wonders. Use the Vault tab anytime to back up your save string or sync 10 cloud snapshots via Supabase.',
+    hint: 'You can replay this guide anytime via the "? Guide" button at the top.',
+    tab: 'tab-world',
+    selector: '#bottom-nav'
+  }
+];
+
+function renderTutorial() {
+  const layer = document.getElementById('tutorial-layer');
+  if (!layer) return;
+
+  // Clear previous highlights
+  document.querySelectorAll('.tutorial-highlight').forEach((el) => {
+    el.classList.remove('tutorial-highlight');
+  });
+
+  if (state.tutorialDone) {
+    layer.classList.add('hidden');
+    return;
+  }
+
+  const stepIdx = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, state.tutorialStep || 0));
+  const step = TUTORIAL_STEPS[stepIdx];
+  layer.classList.remove('hidden');
+
+  document.getElementById('tutorial-step-badge').textContent = `STEP ${stepIdx + 1} OF ${TUTORIAL_STEPS.length}`;
+  document.getElementById('tutorial-title').textContent = step.title;
+  document.getElementById('tutorial-body').textContent = step.body;
+  document.getElementById('tutorial-hint').textContent = step.hint;
+
+  const prevBtn = document.getElementById('btn-tutorial-prev');
+  const nextBtn = document.getElementById('btn-tutorial-next');
+  prevBtn.disabled = stepIdx === 0;
+  prevBtn.style.opacity = stepIdx === 0 ? '0.4' : '1';
+  nextBtn.textContent = stepIdx === TUTORIAL_STEPS.length - 1 ? 'Finish Guide ✓' : 'Next →';
+
+  const target = document.querySelector(step.selector);
+  const card = document.getElementById('tutorial-card');
+  const arrow = document.getElementById('tutorial-arrow');
+
+  if (target) {
+    target.classList.add('tutorial-highlight');
+    const rect = target.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const cardHeight = card.offsetHeight || 195;
+
+    // Position card below target if target is in upper half, otherwise above target
+    if (rect.bottom + cardHeight + 24 < vh || rect.top < vh * 0.45) {
+      const topPos = Math.min(vh - cardHeight - 12, Math.max(12, rect.bottom + 14));
+      card.style.top = `${topPos}px`;
+      card.style.bottom = 'auto';
+      arrow.className = 'tutorial-arrow arrow-up';
+    } else {
+      const bottomPos = Math.min(vh - 12, Math.max(14, vh - rect.top + 14));
+      card.style.bottom = `${bottomPos}px`;
+      card.style.top = 'auto';
+      arrow.className = 'tutorial-arrow arrow-down';
+    }
+
+    // Align arrow horizontally toward target center
+    const cardRect = card.getBoundingClientRect();
+    const targetCenter = rect.left + rect.width / 2;
+    const arrowLeft = Math.max(18, Math.min((cardRect.width || 320) - 32, targetCenter - cardRect.left - 7));
+    arrow.style.left = `${arrowLeft}px`;
+  } else {
+    card.style.top = 'auto';
+    card.style.bottom = '76px';
+    arrow.className = 'tutorial-arrow hidden';
+  }
+}
+
+function goToTutorialStep(nextIdx) {
+  if (nextIdx >= TUTORIAL_STEPS.length) {
+    state.tutorialDone = true;
+    saveLocalState();
+    renderTutorial();
+    return;
+  }
+  state.tutorialStep = Math.max(0, nextIdx);
+  const step = TUTORIAL_STEPS[state.tutorialStep];
+  if (step && step.tab) {
+    switchTab(step.tab);
+  }
+  saveLocalState();
+  renderAll();
+  const target = step ? document.querySelector(step.selector) : null;
+  if (target && target.scrollIntoView) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  setTimeout(renderTutorial, 60);
+}
+
 function renderAll() {
   renderHeader();
   renderEventBanner();
@@ -636,6 +917,7 @@ function renderAll() {
   renderCraftAndTechTab();
   renderWorldTab();
   renderChronicleTab();
+  renderTutorial();
 }
 
 /* USER INTERACTIONS */
@@ -653,6 +935,9 @@ document.getElementById('workspace').addEventListener('click', (e) => {
         const gain = amt * toolBoost;
         state.resources[resId] = Math.min(caps[resId], (state.resources[resId] || 0) + gain);
       });
+      if (!state.tutorialDone && state.tutorialStep === 1) {
+        state.tutorialStep = 2;
+      }
       renderAll();
       saveLocalState();
     }
@@ -664,6 +949,9 @@ document.getElementById('workspace').addEventListener('click', (e) => {
     const jId = btn.dataset.jobAdd;
     if (state.pop - getAssignedPop() > 0) {
       state.jobs[jId] = (state.jobs[jId] || 0) + 1;
+      if (!state.tutorialDone && state.tutorialStep === 2) {
+        state.tutorialStep = 3;
+      }
       renderAll();
       saveLocalState();
     }
@@ -846,21 +1134,38 @@ document.getElementById('event-banner').addEventListener('click', (e) => {
   saveLocalState();
 });
 
-// Theme Toggle
+// Theme Toggle & Tutorial Controls
 document.getElementById('btn-theme').addEventListener('click', () => {
   state.paperMode = !state.paperMode;
   renderHeader();
   saveLocalState();
 });
 
+document.getElementById('btn-tutorial').addEventListener('click', () => {
+  state.tutorialDone = false;
+  goToTutorialStep(0);
+});
+
+document.getElementById('btn-tutorial-prev').addEventListener('click', () => {
+  goToTutorialStep((state.tutorialStep || 0) - 1);
+});
+
+document.getElementById('btn-tutorial-next').addEventListener('click', () => {
+  goToTutorialStep((state.tutorialStep || 0) + 1);
+});
+
+document.getElementById('btn-tutorial-skip').addEventListener('click', () => {
+  state.tutorialDone = true;
+  saveLocalState();
+  renderTutorial();
+});
+
 // Bottom Navigation
 document.getElementById('bottom-nav').addEventListener('click', (e) => {
   const btn = e.target.closest('.nav-btn');
   if (!btn) return;
-  document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById(btn.dataset.tab).classList.add('active');
+  switchTab(btn.dataset.tab);
+  renderTutorial();
 });
 
 /* SUPABASE VAULT (OPTION A + C: PASSPHRASE + 10-SNAPSHOT TIME MACHINE) */
