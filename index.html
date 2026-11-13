@@ -16,6 +16,9 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body data-era="stone">
+  <!-- FULL-VIEWPORT EVOLVING WORLD BACKGROUND CANVAS -->
+  <canvas id="world-bg-canvas" aria-hidden="true"></canvas>
+
   <div id="app-shell">
     <!-- TOP STATUS & RESOURCE LEDGER -->
     <header id="top-bar">
@@ -23,18 +26,14 @@
         <div class="era-title-group">
           <span class="label-muted">ERA:</span>
           <strong id="era-title">Stone Age</strong>
+          <span id="civ-stage-caption" class="badge-inline">Nomadic Riverbank Camp</span>
           <span id="offline-badge" class="badge-inline hidden"></span>
         </div>
         <div class="header-controls">
+          <button id="btn-peek-world" class="btn-small" type="button" aria-label="Toggle Unobstructed World View">👁 World View</button>
           <button id="btn-tutorial" class="btn-small accent-teal" type="button" aria-label="Open Tutorial Guide">? Guide</button>
           <button id="btn-theme" class="btn-small" type="button" aria-label="Toggle Paper Mode">Paper Mode</button>
         </div>
-      </div>
-
-      <!-- EVOLVING ERA LANDSCAPE & SETTLEMENT SKYLINE -->
-      <div id="civ-stage-banner" class="civ-stage-banner" aria-hidden="true">
-        <div id="civ-stage-art" class="civ-stage-art"></div>
-        <div id="civ-stage-caption" class="civ-stage-caption">Nomadic Riverbank Camp</div>
       </div>
 
       <!-- Resource Grid -->

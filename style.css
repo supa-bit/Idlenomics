@@ -1,14 +1,14 @@
 :root {
   /* Brighter Ocular-Friendly Palette (Default Dark Mode — Warm Alabaster & Botanical Accents) */
   --bg-canvas: #161A17;
-  --bg-panel: rgba(31, 37, 32, 0.92);
-  --bg-header-cell: rgba(20, 25, 21, 0.94);
-  --bg-button: #2B342D;
+  --bg-panel: rgba(24, 30, 25, 0.72);
+  --bg-header-cell: rgba(18, 23, 19, 0.80);
+  --bg-button: rgba(43, 52, 45, 0.86);
   --bg-button-active: #39463B;
-  --border-grid: #404D43;
+  --border-grid: rgba(98, 117, 102, 0.55);
   --border-strong: #627566;
   --text-primary: #F2EFE6;
-  --text-muted: #B6C0B4;
+  --text-muted: #C4CEC2;
   --accent-moss: #85D17C;
   --accent-ochre: #F0B45B;
   --accent-terra: #EA7B71;
@@ -28,10 +28,10 @@ body[data-era="stone"] {
 
 body[data-era="bronze"] {
   --bg-canvas: #1B1713;
-  --bg-panel: rgba(39, 32, 26, 0.92);
-  --bg-button: #372D24;
+  --bg-panel: rgba(34, 27, 21, 0.72);
+  --bg-button: rgba(55, 45, 36, 0.86);
   --bg-button-active: #473A2E;
-  --border-grid: #524336;
+  --border-grid: rgba(120, 98, 78, 0.55);
   --border-strong: #78624E;
   --sky-top: #38281B;
   --sky-bottom: #18130E;
@@ -40,10 +40,10 @@ body[data-era="bronze"] {
 
 body[data-era="iron"] {
   --bg-canvas: #15191F;
-  --bg-panel: rgba(29, 35, 43, 0.92);
-  --bg-button: #29323E;
+  --bg-panel: rgba(24, 30, 38, 0.72);
+  --bg-button: rgba(41, 50, 62, 0.86);
   --bg-button-active: #364252;
-  --border-grid: #425062;
+  --border-grid: rgba(97, 117, 143, 0.55);
   --border-strong: #61758F;
   --sky-top: #232F3F;
   --sky-bottom: #12161C;
@@ -52,10 +52,10 @@ body[data-era="iron"] {
 
 body[data-era="classical"] {
   --bg-canvas: #181921;
-  --bg-panel: rgba(34, 35, 46, 0.92);
-  --bg-button: #303242;
+  --bg-panel: rgba(28, 30, 42, 0.72);
+  --bg-button: rgba(48, 50, 66, 0.86);
   --bg-button-active: #3E4156;
-  --border-grid: #4C4F67;
+  --border-grid: rgba(112, 116, 148, 0.55);
   --border-strong: #707494;
   --sky-top: #2C2F48;
   --sky-bottom: #15161F;
@@ -64,10 +64,10 @@ body[data-era="classical"] {
 
 body[data-era="medieval"] {
   --bg-canvas: #191520;
-  --bg-panel: rgba(37, 31, 46, 0.92);
-  --bg-button: #342B40;
+  --bg-panel: rgba(31, 25, 40, 0.72);
+  --bg-button: rgba(52, 43, 64, 0.86);
   --bg-button-active: #453954;
-  --border-grid: #534566;
+  --border-grid: rgba(122, 103, 148, 0.55);
   --border-strong: #7A6794;
   --sky-top: #322444;
   --sky-bottom: #15111B;
@@ -77,14 +77,14 @@ body[data-era="medieval"] {
 /* PAPER MODE (Bright Warm Parchment — Low Glare Daylight Palette) */
 body.paper-mode {
   --bg-canvas: #EFE9DC;
-  --bg-panel: rgba(247, 243, 234, 0.94);
-  --bg-header-cell: #FAF7F0;
-  --bg-button: #E4DCCB;
+  --bg-panel: rgba(247, 243, 234, 0.78);
+  --bg-header-cell: rgba(250, 247, 240, 0.85);
+  --bg-button: rgba(228, 220, 203, 0.88);
   --bg-button-active: #D5CBB6;
-  --border-grid: #BFB39C;
+  --border-grid: rgba(150, 138, 116, 0.6);
   --border-strong: #7A705E;
   --text-primary: #1F1D1A;
-  --text-muted: #524C43;
+  --text-muted: #4A443B;
   --accent-moss: #26783A;
   --accent-ochre: #B56214;
   --accent-terra: #B83A2E;
@@ -150,8 +150,19 @@ html, body {
   display: none !important;
 }
 
+#world-bg-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+  display: block;
+}
+
 #app-shell {
   position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -160,7 +171,34 @@ html, body {
   margin: 0 auto;
   border-left: 2px solid var(--border-grid);
   border-right: 2px solid var(--border-grid);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 35%);
+  background: transparent;
+}
+
+/* UNOBSTRUCTED WORLD VIEW TOGGLE */
+body.world-peek-active #workspace,
+body.world-peek-active #bottom-nav,
+body.world-peek-active #resource-ledger,
+body.world-peek-active #event-banner {
+  opacity: 0.05;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+#workspace,
+#bottom-nav,
+#resource-ledger,
+#event-banner {
+  transition: opacity 0.35s ease;
+}
+
+body.world-peek-active #top-bar {
+  background-color: rgba(15, 20, 16, 0.45);
+  border-bottom-color: transparent;
+}
+
+body.world-peek-active #btn-peek-world {
+  border-color: var(--accent-ochre);
+  color: var(--accent-ochre);
 }
 
 /* TOP LEDGER */
@@ -169,13 +207,15 @@ html, body {
   border-bottom: 2px solid var(--border-strong);
   padding: 8px 14px;
   flex-shrink: 0;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(6px);
 }
 
 .era-strip {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   padding-bottom: 6px;
   margin-bottom: 6px;
   border-bottom: 1px solid var(--border-grid);
@@ -184,6 +224,7 @@ html, body {
 .era-title-group {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
   font-size: 15px;
 }
@@ -203,49 +244,6 @@ html, body {
   border: 1px solid var(--accent-moss);
   border-radius: 4px;
   color: var(--text-primary);
-}
-
-/* EVOLVING ERA LANDSCAPE & SKYLINE BANNER */
-.civ-stage-banner {
-  position: relative;
-  width: 100%;
-  height: 62px;
-  margin-bottom: 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  overflow: hidden;
-  background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bottom) 100%);
-}
-
-.civ-stage-art {
-  width: 100%;
-  height: 100%;
-}
-
-.civ-stage-art svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.civ-stage-caption {
-  position: absolute;
-  top: 4px;
-  right: 8px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: rgba(15, 18, 16, 0.68);
-  color: #F2EFE6;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-}
-
-body.paper-mode .civ-stage-caption {
-  background: rgba(250, 247, 240, 0.85);
-  color: #1F1D1A;
-  border-color: rgba(0, 0, 0, 0.18);
 }
 
 .res-grid {
