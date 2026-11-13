@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Idlenomics — Mountain & atmosphere study</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #10191e; color: #eee9dc; font: 14px/1.5 system-ui,sans-serif; }
+    header, main, footer { width: min(1680px, calc(100% - 48px)); margin: auto; }
+    header { padding: 30px 0 22px; display:flex; align-items:end; justify-content:space-between; gap:24px; flex-wrap:wrap; }
+    h1 { font: 400 clamp(22px,3vw,36px)/1.2 Georgia,serif; margin: 5px 0 0; }
+    .eyebrow { color:#b8baaa; font-size:11px; text-transform:uppercase; letter-spacing:.18em; }
+    .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .group { display:flex; gap:3px; padding:4px; background:#1d2a30; border:1px solid #3b494b; border-radius:7px; }
+    button,select { border:0; color:#d3d7cb; background:transparent; font:inherit; padding:7px 10px; border-radius:4px; cursor:pointer; }
+    select { color:#eee9dc; }
+    select option { background:#1d2a30; }
+    button[aria-pressed="true"] { color:#fff4d3; background:#465953; }
+    button:hover { background:#34463f; }
+    :focus-visible { outline:2px solid #ddc18d; outline-offset:2px; }
+    figure { margin:0; border:1px solid #58625b; background:#182127; box-shadow:0 18px 60px #0004; }
+    #study-output { display:block; width:100%; height:auto; }
+    figcaption { padding:14px 18px; color:#b9c2ba; font-size:12px; border-top:1px solid #384940; }
+    footer { padding:22px 0; display:flex; justify-content:space-between; gap:24px; color:#9dacaa; font-size:12px; }
+    footer p { margin:0; max-width:640px; }
+    a { color:#dbc59a; }
+    #world-bg-canvas { display:none; }
+    @media(max-width:600px) { header,main,footer { width:calc(100% - 24px); } header { padding-top:20px; } footer{display:block} footer p+p{margin-top:12px} button,select{padding:7px} }
+  </style>
+</head>
+<body>
+  <header>
+    <div><span class="eyebrow">Idlenomics · Environment study 01</span><h1>Mountains & atmosphere</h1></div>
+    <div class="controls" aria-label="Preview controls">
+      <div class="group"><select id="era" aria-label="Era"><option value="stone">Stone Age</option><option value="bronze" selected>Bronze Age</option><option value="iron">Iron Age</option><option value="classical">Classical Age</option><option value="medieval">Medieval Age</option></select></div>
+      <div class="group" aria-label="Lighting"><button id="night" aria-pressed="false">Dusk</button><button id="day" aria-pressed="true">Daylight</button></div>
+      <div class="group" aria-label="View"><button id="mountains" aria-pressed="true">Mountains only</button><button id="scene" aria-pressed="false">Full scene</button></div>
+      <div class="group"><button id="motion" aria-pressed="false">Play motion</button></div>
+    </div>
+  </header>
+  <main><figure><canvas id="study-output" role="img" aria-label="Isolated mountain and atmosphere preview"></canvas><figcaption id="caption">Composed ridgelines · branching gullies · directional rock lighting · distant haze</figcaption></figure></main>
+  <footer><p>This study isolates the mountain ranges and atmosphere. Switch to the full scene to check their scale and contrast behind the settlement.</p><p>Space: pause or play · <a href="./">Return to the game</a></p></footer>
+  <canvas id="world-bg-canvas" aria-hidden="true"></canvas>
+  <script type="module">
+    import { WorldBackdropRenderer } from './world-canvas.js';
+    const source = document.getElementById('world-bg-canvas');
+    const output = document.getElementById('study-output');
+    const ctx = output.getContext('2d', { alpha: false });
+    const renderer = new WorldBackdropRenderer(source.id);
+    renderer.pause();
+    const params = new URLSearchParams(location.search);
+    let era = ['stone','bronze','iron','classical','medieval'].includes(params.get('era')) ? params.get('era') : 'bronze';
+    let paper = params.get('mode') !== 'dusk';
+    let wholeScene = params.get('view') === 'scene';
+    let playing = false, time = 12, last = null, raf = 0;
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+    const controls = Object.fromEntries(['era','day','night','mountains','scene','motion','caption'].map(id => [id,document.getElementById(id)]));
+    function synchronize() {
+      controls.era.value = era;
+      for(const [id,active] of [['day',paper],['night',!paper],['mountains',!wholeScene],['scene',wholeScene],['motion',playing]]) controls[id].setAttribute('aria-pressed',String(active));
+      controls.motion.textContent = playing ? 'Pause motion' : 'Play motion';
+      controls.caption.textContent = wholeScene ? 'Integration view · mountains and atmosphere behind the existing settlement' : 'Composed ridgelines · branching gullies · directional rock lighting · distant haze';
+      output.setAttribute('aria-label',`${era} age ${paper?'daylight':'dusk'} ${wholeScene?'settlement scene':'mountain and atmosphere study'}`);
+      const query = new URLSearchParams({era,mode:paper?'day':'dusk',view:wholeScene?'scene':'mountains'});
+      history.replaceState(null,'',`?${query}`);
+    }
+    function update() {
+      renderer.updateState({ era,paperMode:paper,pop:29,
+        buildings:{hide_tent:8,forager_hut:5,lumber_pile:1,mud_brick_hut:2,granary:1},
+        jobs:{farmer:7,woodcutter:1,quarrier:1,hunter:1,scholar:2,artisan:1,miner:1},
+        techs:['oral_tradition','caravan_trade'],wonders:{megalith:2} });
+      synchronize(); paint();
+    }
+    function paint() {
+      output.setAttribute('aria-busy',String(!renderer.mountains.ready));
+      controls.caption.textContent = renderer.mountains.ready
+        ? (wholeScene ? 'Integration view · mountains and atmosphere behind the existing settlement' : 'Composed ridgelines · branching gullies · directional rock lighting · distant haze')
+        : 'Preparing this landscape…';
+      renderer.time = time;
+      renderer.reducedMotion = reduced.matches && !playing;
+      if (wholeScene) renderer.draw();
+      else {
+        const c=renderer.ctx;
+        c.setTransform(renderer.dpr,0,0,renderer.dpr,0,0);
+        for(let i=0;i<4;i++) {
+          const layer=renderer.layers[i];
+          c.drawImage(layer.canvas,-layer.pad,-layer.pad,renderer.width+layer.pad*2,renderer.height+layer.pad*2);
+          if(i===1) renderer._plane(1,cc=>renderer._skyMotion(cc,renderer.reducedMotion?0:time));
+        }
+        renderer._plane(3,cc=>renderer.mountains.paintMist(cc,renderer.reducedMotion?0:time));
+      }
+      const height = wholeScene ? source.height : Math.min(source.height,Math.round(source.height*565/renderer.worldHeight));
+      if(output.width!==source.width)output.width=source.width;
+      if(output.height!==height)output.height=height;
+      ctx.drawImage(source,0,0,source.width,height,0,0,output.width,output.height);
+    }
+    function tick(now) {
+      raf=0;
+      if(!playing||document.hidden)return;
+      if(last!==null)time+=(now-last)/1000;
+      last=now;paint();raf=requestAnimationFrame(tick);
+    }
+    function toggle() {
+      playing=!playing;last=null;
+      if(raf)cancelAnimationFrame(raf);
+      raf=playing?requestAnimationFrame(tick):0;synchronize();paint();
+    }
+    controls.era.addEventListener('change',e=>{era=e.target.value;update();});
+    controls.day.addEventListener('click',()=>{paper=true;update();});
+    controls.night.addEventListener('click',()=>{paper=false;update();});
+    controls.mountains.addEventListener('click',()=>{wholeScene=false;update();});
+    controls.scene.addEventListener('click',()=>{wholeScene=true;update();});
+    controls.motion.addEventListener('click',toggle);
+    document.addEventListener('keydown',e=>{if(e.code==='Space'&&!['BUTTON','SELECT','INPUT'].includes(document.activeElement.tagName)){e.preventDefault();toggle();}});
+    window.addEventListener('resize',paint);
+    source.addEventListener('worldbackdropready',paint);
+    document.addEventListener('visibilitychange',()=>{last=null;if(raf)cancelAnimationFrame(raf);raf=0;if(!document.hidden&&playing)raf=requestAnimationFrame(tick);});
+    reduced.addEventListener('change',()=>{if(reduced.matches&&playing)toggle();else paint();});
+    window.addEventListener('pagehide',event=>{if(raf)cancelAnimationFrame(raf);raf=0;if(!event.persisted)renderer.destroy();});
+    window.addEventListener('pageshow',event=>{if(event.persisted){last=null;paint();if(playing&&!document.hidden&&!raf)raf=requestAnimationFrame(tick);}});
+    update();
+  </script>
+</body>
+</html>

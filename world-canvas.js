@@ -13,6 +13,9 @@
  * Optional: pause(), resume(), seek(seconds), replay(), destroy(),
  *           enableGyroscope() (call from a user gesture on permissioned iOS).
  * Reduced motion freezes ambient animation and disables input parallax.
+ * Mountain artwork bakes asynchronously in a self-contained worker; the canvas
+ * dispatches "worldbackdropready" when the detailed landscape is available.
+ * Worker-less browsers use a bounded idle-time CPU fallback.
  */
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -98,6 +101,359 @@ function tree(c,x,y,h,p,seed,kind='pine',time=0) {
   c.restore();
 }
 
+/* -------------------------------------------------------------------------
+ * MOUNTAINS & ATMOSPHERE
+ * This subsystem owns only the two mountain planes, cloud wisps and valley fog.
+ * Geometry is sampled in world space, independently of theme and viewport size.
+ * The relief is baked once; the animation loop only composites cached images.
+ * ---------------------------------------------------------------------- */
+function smooth01(v) {
+  const t = clamp(v, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+function mixColor(a, b, t) {
+  return a.map((v, i) => v + (b[i] - v) * t);
+}
+function parseColor(hex) {
+  return [1, 3, 5].map(start => parseInt(hex.slice(start, start + 2), 16));
+}
+// Integer hashing avoids expensive trigonometry in the relief rasterizer.
+function rockHash(x, y, seed) {
+  let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ seed;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+function rockNoise(x, y, seed) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = smooth01(x - ix), fy = smooth01(y - iy);
+  const a = rockHash(ix, iy, seed), b = rockHash(ix + 1, iy, seed);
+  const c = rockHash(ix, iy + 1, seed), d = rockHash(ix + 1, iy + 1, seed);
+  return (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy;
+}
+function rockFbm(x, y, seed, octaves = 4) {
+  let sum = 0, amplitude = .55, total = 0;
+  for (let i = 0; i < octaves; i++) {
+    sum += rockNoise(x, y, seed + i * 1013) * amplitude;
+    total += amplitude;
+    const nextX = x * 1.91 - y * .17;
+    y = x * .17 + y * 1.91;
+    x = nextX;
+    amplitude *= .48;
+  }
+  return sum / total;
+}
+// Deliberately composed massifs, shoulders, hanging valleys and passes. These
+// control points do not repeat on a fixed grid. Small-scale rock is procedural.
+const MOUNTAIN_PROFILES = [
+  [
+    [-2050, 397], [-1800, 345], [-1620, 278], [-1480, 312], [-1320, 239],
+    [-1180, 291], [-1050, 267], [-910, 324], [-785, 287], [-655, 202],
+    [-570, 231], [-465, 273], [-330, 298], [-220, 251], [-95, 282],
+    [50, 333], [185, 290], [325, 249], [455, 198], [560, 226],
+    [695, 302], [840, 324], [970, 278], [1100, 232], [1240, 266],
+    [1370, 338], [1540, 303], [1730, 363], [2050, 398]
+  ],
+  [
+    [-2050, 471], [-1830, 406], [-1680, 356], [-1540, 390], [-1400, 421],
+    [-1240, 379], [-1110, 325], [-1015, 288], [-930, 316], [-845, 241],
+    [-755, 274], [-655, 350], [-555, 326], [-455, 353], [-350, 274],
+    [-278, 231], [-205, 268], [-120, 350], [-15, 408], [86, 382],
+    [176, 330], [267, 278], [349, 240], [424, 281], [530, 339],
+    [605, 317], [705, 375], [795, 324], [910, 245], [1005, 281],
+    [1125, 337], [1230, 305], [1355, 386], [1495, 343], [1650, 415],
+    [1810, 388], [2050, 463]
+  ]
+];
+const ROCK_TONES = {
+  stone: { shadow: [30, 56, 66], mid: [66, 94, 98], light: [145, 162, 148], day: [139, 165, 154] },
+  bronze: { shadow: [72, 69, 86], mid: [139, 112, 99], light: [228, 190, 139], day: [177, 151, 123] },
+  iron: { shadow: [31, 48, 72], mid: [78, 99, 122], light: [166, 182, 186], day: [134, 159, 175] },
+  classical: { shadow: [42, 75, 96], mid: [98, 133, 146], light: [204, 211, 185], day: [152, 178, 177] },
+  medieval: { shadow: [48, 52, 85], mid: [99, 104, 133], light: [212, 180, 159], day: [165, 164, 175] }
+};
+class MountainAtmosphere {
+  constructor({ era, paper, palette: p, left, right, scale, deferBake = false }) {
+    this.era = era;
+    this.paper = paper;
+    this.palette = p;
+    this.left = left - 45;
+    this.right = right + 45;
+    this.span = this.right - this.left;
+    // World-space density is bounded separately from the native-DPR canvas.
+    // The large forms, channels and grain stay fixed when this resolution changes.
+    this.rasterScale = Math.min(.78, Math.max(.48, scale*.78));
+    this.ready = false;
+    this.ranges = null;
+    this.clouds = null;
+    this.mist = null;
+    if(!deferBake)this.bake();
+  }
+  bake() {
+    this.ranges = [this._bakeRange(0), this._bakeRange(1)];
+    this.clouds = this._bakeAtmosphere(false);
+    this.mist = this._bakeAtmosphere(true);
+    this.ready = true;
+  }
+  skyline(x, range, detailed = true) {
+    const points = MOUNTAIN_PROFILES[range];
+    let i = 0;
+    while (i < points.length - 2 && x > points[i + 1][0]) i++;
+    const a = points[i], b = points[i + 1];
+    const u = clamp((x - a[0]) / (b[0] - a[0]), 0, 1);
+    const before = points[Math.max(0, i - 1)], after = points[Math.min(points.length - 1, i + 2)];
+    // Limited Hermite tangents retain sharp shoulders without repeated triangles.
+    const ma = (b[1] - before[1]) / (b[0] - before[0]) * (b[0] - a[0]) * .62;
+    const mb = (after[1] - a[1]) / (after[0] - a[0]) * (b[0] - a[0]) * .62;
+    const u2 = u * u, u3 = u2 * u;
+    const broad = (2*u3-3*u2+1)*a[1] + (u3-2*u2+u)*ma + (-2*u3+3*u2)*b[1] + (u3-u2)*mb;
+    const relief = { stone: .93, bronze: .78, iron: 1.09, classical: .90, medieval: 1 }[this.era];
+    if(!detailed)return 475-(475-broad)*relief;
+    const crag = (rockFbm(x*.025, 2, 117+range*31, 4)-.5) * (range ? 17 : 10);
+    const chips = (rockNoise(x*.16, 7, 311+range)-.5) * (this.era==='iron' ? 6 : 3);
+    return 475 - (475-broad)*relief + crag + chips;
+  }
+  _gullyMask(width, height, top, dx, dy, range) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const c = canvas.getContext('2d', { willReadFrequently: true });
+    c.setTransform(1/dx, 0, 0, 1/dy, -this.left/dx, -top/dy);
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    const points = MOUNTAIN_PROFILES[range];
+    const strokeChannel = (start, end, bend, depth, seed) => {
+      const position = u => [
+        start[0]+(end[0]-start[0])*u + Math.sin(u*Math.PI)*bend + Math.sin(u*7+seed)*u*3,
+        start[1]+(end[1]-start[1])*u
+      ];
+      // Continuous tapered beds avoid repeated round-cap dots at segment joins.
+      for (const spread of [2.7, 1.4, .65]) {
+        const outline=[];
+        for(let j=0;j<=36;j++){
+          const u=j/36, point=position(u), radius=(.4+u*4)*spread;
+          outline.push([point[0]-radius,point[1]]);
+        }
+        for(let j=36;j>=0;j--){
+          const u=j/36, point=position(u), radius=(.4+u*4)*spread;
+          outline.push([point[0]+radius,point[1]]);
+        }
+        c.save();c.filter='blur(1.4px)';
+        poly(c,outline,`rgba(255,255,255,${depth*.22})`);c.restore();
+      }
+    };
+    for (let i=1;i<points.length-1;i++) {
+      if (points[i][1]>=points[i-1][1] || points[i][1]>=points[i+1][1]) continue;
+      const summit=points[i][0], y=3;
+      const direction = i%2 ? -1 : 1;
+      const foot = summit + direction*(70+rand(i+range)*95);
+      if (Math.max(summit,foot)<this.left-150 || Math.min(summit,foot)>this.right+150) continue;
+      const endY=310+rand(i)*35;
+      strokeChannel([summit+3,y],[foot,endY],direction*23,.90,i);
+      // Tributaries join downstream, giving a legible drainage hierarchy.
+      for(let branch=0;branch<3;branch++) {
+        const join=.48+branch*.13;
+        const to=[summit+(foot-summit)*join+Math.sin(join*Math.PI)*direction*23,y+(endY-y)*join];
+        const side=branch%2 ? -1 : 1;
+        const from=[summit+side*(34+branch*24),y+25+branch*27];
+        strokeChannel(from,to,-side*(9+branch*4),.6,branch+i);
+      }
+    }
+    return c.getImageData(0,0,width,height).data;
+  }
+  _bakeRange(range) {
+    // A real heightfield, viewed obliquely: x is horizontal, z runs toward the
+    // viewer, and elevation projects upward. Front strips overwrite rear strips.
+    // Lighting uses the heightfield normals, not a screen-space emboss filter.
+    const top=130, bottom=660, base=560;
+    const width=Math.min(2300,Math.ceil(this.span*this.rasterScale));
+    const height=Math.ceil((bottom-top)*this.rasterScale);
+    const depthCount=330, back=-190, front=410;
+    const dx=this.span/width, dy=(bottom-top)/height, dz=(front-back)/(depthCount-1);
+    const heights=new Float32Array(width*depthCount);
+    const gullies=this._gullyMask(width,depthCount,back,dx,dz,range);
+    const seed=range?8317:4111;
+    const profileStep=1.5,profileLeft=this.left-45;
+    const profile=new Float32Array(Math.ceil((this.span+90)/profileStep)+2);
+    for(let i=0;i<profile.length;i++)profile[i]=this.skyline(profileLeft+i*profileStep,range,false);
+    const profileAt=x=>{const u=clamp((x-profileLeft)/profileStep,0,profile.length-1.001),i=Math.floor(u);return profile[i]+(profile[i+1]-profile[i])*(u-i);};
+    for(let iz=0;iz<depthCount;iz++) {
+      const z=back+iz*dz;
+      for(let ix=0;ix<width;ix++) {
+        const x=this.left+(ix+.5)*dx;
+        const warp=(rockNoise(x*.004,z*.005,seed)-.5)*33;
+        const summit=base-profileAt(x+warp);
+        const ridgeZ=(rockNoise(x*.004,2,seed+19)-.5)*36;
+        const distance=z-ridgeZ;
+        const shoulder=distance<0?112:168+rockNoise(x*.003,3,seed)*38;
+        const envelope=Math.exp(-Math.pow(Math.abs(distance/shoulder),1.42));
+        const bedrock=rockFbm(x*.010,z*.016,seed+97,4)-.5;
+        const flow=rockNoise(x*.008,z*.009,seed+81)*2-1;
+        const ridge=1-flow*flow;
+        const grain=(rockNoise(x*.12,z*.13,seed+51)-.5)*.65;
+        const cut=gullies[(iz*width+ix)*4+3]/255;
+        const broad=summit*envelope;
+        const carving=bedrock*broad*.27+(ridge-.5)*broad*.08;
+        const crag=(rockFbm(x*.047,z*.037,seed+233,3)-.5)*8*Math.exp(-z*z/7000);
+        const strata=this.era==='bronze'?Math.sin(broad*.23+rockNoise(x*.008,z*.009,seed+44)*2.6)*.9:0;
+        heights[iz*width+ix]=Math.max(0,broad+carving+crag+strata+grain-cut*9*smooth01((z+12)/70));
+      }
+    }
+    const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+    const c=canvas.getContext('2d'), pixels=c.createImageData(width,height), data=pixels.data;
+    const tones=ROCK_TONES[this.era], sky=parseColor(this.palette[2]);
+    let shadow=tones.shadow, mid=tones.mid, light=tones.light;
+    if(this.paper) {
+      shadow=mixColor(shadow,tones.day,.18);
+      mid=mixColor(mid,tones.day,.23);
+      light=mixColor(light,[246,230,193],.16);
+    }
+    const haze=mixColor(sky,this.paper?[169,191,194]:[112,136,161],range?.38:.52);
+    const lightX=this.era==='bronze'?-.62:.62, lightZ=.38, lightUp=.73;
+    const sample=(ix,iz)=>heights[clamp(iz,0,depthCount-1)*width+clamp(ix,0,width-1)];
+    // The shadow probes are aligned with the light and expressed in world units.
+    const probes=[12,31,65].map(d=>({ix:Math.round(lightX*d/dx),iz:Math.round(lightZ*d/dz),rise:lightUp*d}));
+    for(let ix=0;ix<width;ix++) {
+      const x=this.left+(ix+.5)*dx;
+      let previousY=0,previousR=0,previousG=0,previousB=0,hasPrevious=false,crest=bottom;
+      for(let iz=0;iz<depthCount;iz++) {
+        const z=back+iz*dz, elevation=sample(ix,iz);
+        const projectedY=base-elevation+z*.22;
+        crest=Math.min(crest,projectedY);
+        const gx=(sample(ix+1,iz)-sample(ix-1,iz))/(dx*2);
+        const gz=(sample(ix,iz+1)-sample(ix,iz-1))/(dz*2);
+        const normal=1/Math.sqrt(gx*gx+gz*gz+1);
+        const lambert=(-gx*lightX-gz*lightZ+lightUp)*normal;
+        let occlusion=0;
+        for(const probe of probes) if(sample(ix+probe.ix,iz+probe.iz)>elevation+probe.rise)occlusion+=.09;
+        const pigment=rockNoise(x*.15,z*.17,991)-.5;
+        const illumination=clamp(.28+lambert*.68-occlusion+pigment*.024,0,1);
+        const from=illumination<.53?shadow:mid, to=illumination<.53?mid:light;
+        const blend=illumination<.53?illumination/.53:(illumination-.53)/.47;
+        let red=from[0]+(to[0]-from[0])*blend;
+        let green=from[1]+(to[1]-from[1])*blend;
+        let blue=from[2]+(to[2]-from[2])*blend;
+        const foot=smooth01((projectedY-360)/220);
+        const fog=(range?.055:.33)+foot*(range?.41:.31);
+        red+=(haze[0]-red)*fog;green+=(haze[1]-green)*fog;blue+=(haze[2]-blue)*fog;
+        if(this.era==='iron') {
+          const snowLine=222+(rockFbm(x*.018,z*.024,461,3)-.5)*43;
+          const snow=smooth01((elevation-snowLine)/33)*smooth01((normal-.32)*2.4)*.91;
+          red+=((this.paper?230:197)-red)*snow;
+          green+=((this.paper?231:211)-green)*snow;
+          blue+=((this.paper?218:219)-blue)*snow;
+        }
+        if(hasPrevious) {
+          const y0=Math.max(0,Math.ceil((Math.min(projectedY,previousY)-top)/dy));
+          const y1=Math.min(height-1,Math.floor((Math.max(projectedY,previousY)-top)/dy));
+          for(let iy=y0;iy<=y1;iy++) {
+            const screenY=top+(iy+.5)*dy;
+            const u=clamp((screenY-previousY)/(projectedY-previousY||1),0,1);
+            const out=(iy*width+ix)*4;
+            data[out]=previousR+(red-previousR)*u;
+            data[out+1]=previousG+(green-previousG)*u;
+            data[out+2]=previousB+(blue-previousB)*u;
+            data[out+3]=255;
+          }
+        }
+        previousY=projectedY;previousR=red;previousG=green;previousB=blue;hasPrevious=true;
+      }
+      // One-pixel analytical coverage preserves a clean, anti-aliased skyline.
+      const edge=clamp(Math.floor((crest-top)/dy),0,height-1);
+      const alpha=clamp((top+(edge+1)*dy-crest)/dy,0,1);
+      const edgeOffset=(edge*width+ix)*4;
+      if(!data[edgeOffset+3]){
+        // A subpixel crest can leave more than one unpainted row. Extend the
+        // closest actual surface color rather than introducing a black fringe.
+        let row=edge+1;
+        while(row<height&&!data[(row*width+ix)*4+3])row++;
+        if(row<height){
+          const below=(row*width+ix)*4;
+          data[edgeOffset]=data[below];data[edgeOffset+1]=data[below+1];data[edgeOffset+2]=data[below+2];
+        }else continue;
+      }
+      data[edgeOffset+3]=Math.round(alpha*255);
+    }
+    c.putImageData(pixels,0,0);
+    return {canvas,top,bottom};
+  }
+  _bakeAtmosphere(mist) {
+    const top=mist?365:68, bottom=mist?575:365;
+    const width=Math.min(1400,Math.ceil(this.span*.45)), height=mist?120:150;
+    const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+    const c=canvas.getContext('2d'), img=c.createImageData(width,height);
+    const warm=parseColor(this.palette[2]), cool=parseColor(this.palette[1]);
+    for(let iy=0;iy<height;iy++)for(let ix=0;ix<width;ix++) {
+      const x=this.left+(ix+.5)/width*this.span,y=top+(iy+.5)/height*(bottom-top);
+      const n=rockFbm(x*(mist?.006:.0038),y*(mist?.026:.020),mist?331:701,4);
+      const drift=rockNoise(x*.0015,4,901);
+      let alpha,rgb;
+      if(mist) {
+        const band=Math.exp(-Math.pow((y-477-drift*35)/29,2));
+        const lower=Math.exp(-Math.pow((y-536+drift*12)/13,2));
+        alpha=(band*.3+lower*.20)*smooth01((n-.22)*2.1);
+        rgb=mixColor(warm,this.paper?[221,226,206]:[147,171,180],.4);
+      } else {
+        const envelope=Math.exp(-Math.pow((y-195-drift*67)/55,2));
+        const density=smooth01((n-.43)*5.5);
+        alpha=density*envelope*(this.paper?.33:.22);
+        const underside=smooth01((y-190)/120);
+        rgb=mixColor(mixColor(cool,[214,218,213],.55),warm,underside*.75);
+      }
+      const k=(iy*width+ix)*4;
+      img.data[k]=rgb[0];img.data[k+1]=rgb[1];img.data[k+2]=rgb[2];img.data[k+3]=Math.round(alpha*255);
+    }
+    c.putImageData(img,0,0);
+    return {canvas,top,bottom};
+  }
+  paintRange(c,range) {
+    if(!this.ready){
+      // Immediate first paint while detailed rock is generated off-thread.
+      // It uses the same composed ridge profile and world-space camera.
+      const points=[[this.left,660]];
+      for(let x=this.left;x<=this.right+3;x+=3)points.push([x,this.skyline(x,range)]);
+      points.push([this.right,660]);
+      poly(c,points,gradient(c,0,220,0,610,[this.palette[range?4:3],this.palette[2]]));
+      return;
+    }
+    const r=this.ranges[range];
+    c.drawImage(r.canvas,this.left,r.top,this.span,r.bottom-r.top);
+  }
+  paintClouds(c,time) {
+    if(!this.ready)return;
+    const cloud=this.clouds;
+    const drift=Math.sin(time*.012)*18;
+    c.drawImage(cloud.canvas,this.left+drift,cloud.top,this.span,cloud.bottom-cloud.top);
+  }
+  paintMist(c,time) {
+    if(!this.ready)return;
+    const fog=this.mist;
+    c.save();c.globalAlpha=.86+Math.sin(time*.065)*.06;
+    c.drawImage(fog.canvas,this.left+Math.sin(time*.023)*11,fog.top+Math.sin(time*.035)*2,this.span,fog.bottom-fog.top);
+    c.restore();
+  }
+}
+
+// The worker is assembled from the very same generator and small pure helpers.
+// No fetched scripts, runtime dependencies, server, or duplicated terrain model.
+function mountainWorkerSource() {
+  const helpers=[smooth01,mixColor,parseColor,rockHash,rockNoise,rockFbm,poly,gradient];
+  return [
+    'const document={createElement:()=>new OffscreenCanvas(1,1)};',
+    `const clamp=${clamp.toString()},frac=${frac.toString()},rand=${rand.toString()};`,
+    `const MOUNTAIN_PROFILES=${JSON.stringify(MOUNTAIN_PROFILES)};`,
+    `const ROCK_TONES=${JSON.stringify(ROCK_TONES)};`,
+    ...helpers.map(fn=>fn.toString()),
+    MountainAtmosphere.toString(),
+    `self.onmessage=({data})=>{
+      try{
+        const scene=new MountainAtmosphere(data);
+        const surfaces=[...scene.ranges,scene.clouds,scene.mist];
+        const maps=surfaces.map(({canvas,top,bottom})=>({bitmap:canvas.transferToImageBitmap(),top,bottom}));
+        self.postMessage({maps},maps.map(map=>map.bitmap));
+      }catch(error){self.postMessage({error:String(error)});}
+      self.close();
+    };`
+  ].join('\n');
+}
+
 export class WorldBackdropRenderer {
   constructor(canvasId) {
     this.canvas=typeof document!=='undefined'?document.getElementById(canvasId):null;
@@ -144,7 +500,7 @@ export class WorldBackdropRenderer {
   resume(){if(this.destroyed)return;this.paused=false;this._last=null;this._schedule();}
   seek(seconds){this.time=Number.isFinite(Number(seconds))?Math.max(0,Number(seconds)):0;this._last=null;this.draw();}
   replay(){this.seek(0);this.resume();}
-  destroy(){this.destroyed=true;this._cancel();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];}
+  destroy(){this.destroyed=true;this._cancel();this._stopMountainBake();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];this.mountains=null;}
   async enableGyroscope(){
     if(this.destroyed||!this.ctx||typeof DeviceOrientationEvent==='undefined')return false;
     try {
@@ -191,25 +547,99 @@ export class WorldBackdropRenderer {
     // Static planes use bounded cache resolution. The presentation canvas keeps
     // native DPR; bounded caches avoid eight full-DPR framebuffer allocations.
     const density=Math.min(this.dpr,1.5,Math.sqrt(16000000/(7*(this.width+80)*(this.height+80)))), pad=40;
+    const landscapeKey=JSON.stringify([this.width,this.height,this.dpr,this.state.era,this.state.paperMode]);
+    const reuseLandscape=landscapeKey===this._landscapeKey;
+    const previous=this.layers;
+    if(!reuseLandscape){
+      this._stopMountainBake();
+      const options={era:this.state.era,paper:this.state.paperMode,palette:this.p,
+        left:-this.half-pad/this.scale,right:this.half+pad/this.scale,scale:this.scale};
+      this.mountains=new MountainAtmosphere({...options,deferBake:true});
+      this._landscapeKey=landscapeKey;
+      this._startMountainBake(options,this.mountains);
+    }
     this.layers=[];
     for(let i=0;i<7;i++) {
+      if(i<4&&reuseLandscape&&previous[i]){this.layers.push(previous[i]);continue;}
       const canvas=document.createElement('canvas');
       canvas.width=Math.ceil((this.width+pad*2)*density);canvas.height=Math.ceil((this.height+pad*2)*density);
       const c=canvas.getContext('2d');c.setTransform(density*this.scale,0,0,density*this.scale,density*(this.width/2+pad),density*pad);
       const left=-this.half-pad/this.scale,right=this.half+pad/this.scale;
       this._paintPlane(c,i,left,right);
-      this.layers.push({canvas,pad});
+      this.layers.push({canvas,pad,density});
+    }
+  }
+  _stopMountainBake(){
+    this._mountainWorker?.terminate();this._mountainWorker=null;
+    if(this._mountainWorkerURL)URL.revokeObjectURL(this._mountainWorkerURL);
+    this._mountainWorkerURL=null;
+    if(this._mountainFallback){
+      if(this._mountainFallbackIdle)window.cancelIdleCallback?.(this._mountainFallback);
+      else clearTimeout(this._mountainFallback);
+    }
+    this._mountainFallback=0;
+  }
+  _startMountainBake(options,scene){
+    const current=()=>!this.destroyed&&this.mountains===scene;
+    const finish=()=>{
+      if(!current())return;
+      // Repaint only the two mountain planes. Terrain, buildings and camera
+      // state keep their existing canvases and addresses throughout the bake.
+      for(const i of [2,3]){
+        const layer=this.layers[i];if(!layer)return;
+        const {canvas,pad,density}=layer,c=canvas.getContext('2d');
+        c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,canvas.width,canvas.height);
+        c.setTransform(density*this.scale,0,0,density*this.scale,density*(this.width/2+pad),density*pad);
+        this._paintPlane(c,i,-this.half-pad/this.scale,this.half+pad/this.scale);
+      }
+      this.draw();
+      this.canvas.dispatchEvent(new Event('worldbackdropready'));
+    };
+    const fallback=()=>{
+      if(!current())return;
+      const bake=()=>{
+        this._mountainFallback=0;if(!current())return;
+        // Older browsers still get a bounded, lower-resolution CPU bake after
+        // the first paint. Modern browsers never perform this work on the UI.
+        scene.rasterScale=Math.min(scene.rasterScale,.48);
+        scene.bake();finish();
+      };
+      this._mountainFallbackIdle=typeof window.requestIdleCallback==='function';
+      this._mountainFallback=this._mountainFallbackIdle?window.requestIdleCallback(bake,{timeout:600}):setTimeout(bake,32);
+    };
+    if(typeof Worker==='undefined'||typeof OffscreenCanvas==='undefined'){
+      fallback();return;
+    }
+    try{
+      this._mountainWorkerURL=URL.createObjectURL(new Blob([mountainWorkerSource()],{type:'text/javascript'}));
+      const worker=new Worker(this._mountainWorkerURL);this._mountainWorker=worker;
+      worker.onmessage=({data})=>{
+        if(!current()){
+          data.maps?.forEach(map=>map.bitmap.close());return;
+        }
+        this._stopMountainBake();
+        if(data.error){fallback();return;}
+        const surfaces=data.maps.map(({bitmap,top,bottom})=>{
+          const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;
+          canvas.getContext('2d').drawImage(bitmap,0,0);bitmap.close();
+          return {canvas,top,bottom};
+        });
+        scene.ranges=surfaces.slice(0,2);scene.clouds=surfaces[2];scene.mist=surfaces[3];scene.ready=true;
+        finish();
+      };
+      worker.onerror=event=>{
+        event.preventDefault();if(!current())return;
+        this._stopMountainBake();fallback();
+      };
+      worker.postMessage(options);
+    }catch{
+      this._stopMountainBake();fallback();
     }
   }
   _paintPlane(c,i,left,right){
     const p=this.p,s=this.state,h=this.worldHeight+100;
     if(i===0){
       c.fillStyle=gradient(c,0,0,0,620,[p[0],p[1],p[2]]);c.fillRect(left,-100,right-left,h+100);
-      for(let n=0;n<32;n++) {
-        const x=left+rand(n+70)*(right-left),y=60+rand(n+8)*280;
-        c.save();c.globalAlpha=.025+rand(n)*.025;
-        ellipse(c,x,y,90+rand(n+3)*170,4+rand(n+20)*12,p[14]);c.restore();
-      }
     }
     if(i===1){
       const moon=!s.paperMode&&(s.era==='stone'||s.era==='iron');
@@ -223,22 +653,7 @@ export class WorldBackdropRenderer {
       }
     }
     if(i===2||i===3){
-      const far=i===2,seed=far?4:19,step=far?180:240,base=far?444:490;
-      const pts=[[left,h],[left,base]];
-      for(let x=Math.floor(left/step)*step;x<=right+step;x+=step){const peak=base-65-rand(x+seed)*155;
-        pts.push([x,base-35-rand(x+2)*40],[x+step*.23,peak+36],[x+step*.47,peak],[x+step*.66,peak+42],[x+step,base-18]);}
-      pts.push([right,h]);poly(c,pts,p[far?3:4]);
-      c.save();c.clip();
-      // Broken planes catch light, rather than a single flat zig-zag silhouette.
-      for(let x=Math.floor(left/step)*step;x<right;x+=step){const peak=base-65-rand(x+seed)*155,xx=x+step*.47;
-        c.save();c.globalAlpha=far?.22:.48;
-        poly(c,[[xx,peak],[xx+step*.12,peak+53],[x+step,base-18],[xx+step*.02,base+25]],far?p[2]:p[3]);c.restore();
-        if(s.era==='iron')poly(c,[[xx,peak],[xx-19,peak+32],[xx-2,peak+24],[xx+14,peak+40],[xx+step*.12,peak+53]],'#cbd3d1');
-      }
-      c.globalAlpha=.035;
-      for(let n=0;n<1100;n++){const x=left+rand(n+911)*(right-left),y=250+rand(n+61)*270;line(c,[[x,y],[x+rand(n+88)*7,y+1]],p[2],.6);}
-      c.restore();
-      c.save();c.globalAlpha=far?.34:.13;c.fillStyle=gradient(c,0,330,0,550,['transparent',p[2]]);c.fillRect(left,330,right-left,260);c.restore();
+      this.mountains.paintRange(c,i-2);
     }
     if(i===4){
       const pts=[[left,h],[left,550]];
@@ -317,6 +732,7 @@ export class WorldBackdropRenderer {
       const l=this.layers[i],depth=[0,.08,.15,.25,.38,.55,.76][i];
       c.drawImage(l.canvas,-l.pad+this.pointer.x*depth*15,-l.pad+this.pointer.y*depth*9,this.width+l.pad*2,this.height+l.pad*2);
       if(i===1)this._plane(1,cc=>this._skyMotion(cc,t));
+      if(i===3)this._plane(3,cc=>this.mountains.paintMist(cc,t));
       if(i===4)this._plane(4,cc=>this._wonderMotion(cc,t));
       if(i===4)this._plane(5,cc=>this._water(cc,t));
       if(i===5)this._plane(5,cc=>this._fields(cc,t,true));
@@ -342,19 +758,12 @@ export class WorldBackdropRenderer {
         c.globalAlpha=.10;poly(c,pts,gradient(c,0,120,0,280,['#67d5ba','#71c2bd00']));
       }c.restore();
     }
-    // A pair of slowly drifting, translucent banks of cloud.
-    c.save();c.globalAlpha=s.paperMode?.12:.065;
-    for(let n=0;n<9;n++){
-      const x=(frac(rand(n+9)+t*.0015)*(this.half*2+700))-this.half-350,y=235+rand(n+50)*110;
-      for(let j=0;j<5;j++)ellipse(c,x+j*35,y+Math.sin(j+n)*5,68,5+rand(n+j)*9,p[14]);
-    }c.restore();
+    this.mountains?.paintClouds(c,t);
     for(let n=0;n<7;n++){
       const x=frac(t*.008+rand(n+6))*(this.half*2+150)-this.half-75,y=300+Math.sin(n*2)*22+Math.sin(t*.2+n)*5,flap=Math.sin(t*3+n)*2;
       line(c,[[x-4,y+flap],[x,y],[x+4,y+flap]],p[4],.8);
     }
-    // Mist ribbons stay low enough to preserve landmarks.
-    c.save();c.globalAlpha=.065;
-    for(let n=0;n<5;n++)ellipse(c,Math.sin(t*.03+n)*250,490+n*14,this.half+200,9,p[14]);c.restore();
+
   }
   _water(c,t){
     const p=this.p,s=this.state;
