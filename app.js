@@ -896,34 +896,64 @@ function renderTutorial() {
   const target = step.selector ? document.querySelector(step.selector) : null;
   const card = document.getElementById('tutorial-card');
   const arrow = document.getElementById('tutorial-arrow');
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const cardWidth = card.offsetWidth || Math.min(vw * 0.92, 430);
+  const cardHeight = card.offsetHeight || 200;
+
+  arrow.style.left = '';
+  arrow.style.top = '';
 
   if (target) {
     target.classList.add('tutorial-highlight');
     const rect = target.getBoundingClientRect();
-    const vh = window.innerHeight;
-    const cardHeight = card.offsetHeight || 195;
+    let leftPos = 12;
+    let topPos = 12;
 
-    // Position card below target if target is in upper half, otherwise above target
-    if (rect.bottom + cardHeight + 24 < vh || rect.top < vh * 0.45) {
-      const topPos = Math.min(vh - cardHeight - 12, Math.max(12, rect.bottom + 14));
-      card.style.top = `${topPos}px`;
-      card.style.bottom = 'auto';
-      arrow.className = 'tutorial-arrow arrow-up';
+    const canFitLeft = vw >= 900 && rect.height > vh * 0.42 && rect.left - cardWidth - 20 >= 12;
+    const canFitRight = vw >= 900 && rect.height > vh * 0.42 && rect.right + cardWidth + 20 <= vw - 12;
+
+    if (canFitLeft || canFitRight) {
+      const visibleTop = Math.max(16, rect.top);
+      const visibleBottom = Math.min(vh - 76, rect.bottom);
+      const targetMidY = (visibleTop + visibleBottom) / 2;
+      topPos = Math.max(16, Math.min(vh - cardHeight - 76, targetMidY - cardHeight / 2));
+
+      if (canFitLeft) {
+        leftPos = rect.left - cardWidth - 16;
+        arrow.className = 'tutorial-arrow arrow-right';
+      } else {
+        leftPos = rect.right + 16;
+        arrow.className = 'tutorial-arrow arrow-left';
+      }
+      const arrowTop = Math.max(18, Math.min(cardHeight - 28, targetMidY - topPos - 7));
+      arrow.style.top = `${Math.round(arrowTop)}px`;
     } else {
-      const bottomPos = Math.min(vh - 12, Math.max(14, vh - rect.top + 14));
-      card.style.bottom = `${bottomPos}px`;
-      card.style.top = 'auto';
-      arrow.className = 'tutorial-arrow arrow-down';
+      const targetCenterX = rect.left + rect.width / 2;
+      leftPos = Math.max(12, Math.min(vw - cardWidth - 12, targetCenterX - cardWidth / 2));
+
+      const spaceBelow = vh - rect.bottom;
+      const spaceAbove = rect.top;
+
+      if (spaceBelow >= cardHeight + 22 || (spaceBelow >= spaceAbove && rect.top < vh * 0.55)) {
+        topPos = Math.max(12, Math.min(vh - cardHeight - 16, rect.bottom + 14));
+        arrow.className = 'tutorial-arrow arrow-up';
+      } else {
+        topPos = Math.max(12, Math.min(vh - cardHeight - 16, rect.top - cardHeight - 14));
+        arrow.className = 'tutorial-arrow arrow-down';
+      }
+
+      const arrowLeft = Math.max(18, Math.min(cardWidth - 32, targetCenterX - leftPos - 7));
+      arrow.style.left = `${Math.round(arrowLeft)}px`;
     }
 
-    // Align arrow horizontally toward target center
-    const cardRect = card.getBoundingClientRect();
-    const targetCenter = rect.left + rect.width / 2;
-    const arrowLeft = Math.max(18, Math.min((cardRect.width || 320) - 32, targetCenter - cardRect.left - 7));
-    arrow.style.left = `${arrowLeft}px`;
+    card.style.left = `${Math.round(leftPos)}px`;
+    card.style.top = `${Math.round(topPos)}px`;
+    card.style.bottom = 'auto';
   } else {
-    card.style.top = 'auto';
-    card.style.bottom = '76px';
+    card.style.left = `${Math.round(Math.max(12, (vw - cardWidth) / 2))}px`;
+    card.style.top = `${Math.round(Math.max(16, vh - cardHeight - 80))}px`;
+    card.style.bottom = 'auto';
     arrow.className = 'tutorial-arrow hidden';
   }
 }
@@ -1413,6 +1443,18 @@ window.addEventListener('visibilitychange', () => {
     saveLocalState();
   }
 });
+
+window.addEventListener('resize', () => {
+  if (!state.tutorialDone) {
+    renderTutorial();
+  }
+});
+
+window.addEventListener('scroll', () => {
+  if (!state.tutorialDone) {
+    renderTutorial();
+  }
+}, { passive: true });
 
 initVaultInputs();
 checkOfflineProgress();
