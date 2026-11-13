@@ -331,6 +331,8 @@ function checkOfflineProgress() {
   }
 }
 
+let lastSkylineKey = '';
+
 /* RENDER UI (CALM 1-SECOND HEARTBEAT) */
 function renderCivStageBanner() {
   const artEl = document.getElementById('civ-stage-art');
@@ -341,15 +343,6 @@ function renderCivStageBanner() {
   const techCount = state.techs.length;
   const totalBuildings = Object.values(state.buildings).reduce((a, b) => a + b, 0);
   const totalWonders = Object.values(state.wonders).reduce((a, b) => a + b, 0);
-
-  const eraPalettes = {
-    stone: { sky1: '#233829', sky2: '#152219', hill1: '#2E4633', hill2: '#223326', river: '#3B7A78', sun: '#F0B45B' },
-    bronze: { sky1: '#422E1E', sky2: '#241911', hill1: '#573D28', hill2: '#3B291B', river: '#4A8986', sun: '#F6C163' },
-    iron: { sky1: '#273547', sky2: '#161E29', hill1: '#37485E', hill2: '#253242', river: '#5299A3', sun: '#E8A86B' },
-    classical: { sky1: '#313552', sky2: '#1C1E30', hill1: '#45496E', hill2: '#2E314B', river: '#5DA9B8', sun: '#F7D37E' },
-    medieval: { sky1: '#3A284F', sky2: '#1F162B', hill1: '#4F386B', hill2: '#342447', river: '#64B2C4', sun: '#F2BC6E' }
-  };
-  const pal = eraPalettes[era] || eraPalettes.stone;
 
   // Determine settlement evolution caption
   let stageLabel = 'Nomadic Riverbank Camp';
@@ -379,6 +372,19 @@ function renderCivStageBanner() {
   const hasColossus = (state.wonders.colossus || 0) > 0;
   const hasCathedral = (state.wonders.cathedral || 0) > 0;
 
+  const skylineKey = `${era}-${huts}-${houses}-${kilns}-${totalBuildings}-${hasAqueduct}-${hasGuild}-${hasStars}-${hasMegalith}-${hasZiggurat}-${hasColossus}-${hasCathedral}`;
+  if (skylineKey === lastSkylineKey && artEl.innerHTML) return;
+  lastSkylineKey = skylineKey;
+
+  const eraPalettes = {
+    stone: { sky1: '#233829', sky2: '#152219', hill1: '#2E4633', hill2: '#223326', river: '#3B7A78', sun: '#F0B45B' },
+    bronze: { sky1: '#422E1E', sky2: '#241911', hill1: '#573D28', hill2: '#3B291B', river: '#4A8986', sun: '#F6C163' },
+    iron: { sky1: '#273547', sky2: '#161E29', hill1: '#37485E', hill2: '#253242', river: '#5299A3', sun: '#E8A86B' },
+    classical: { sky1: '#313552', sky2: '#1C1E30', hill1: '#45496E', hill2: '#2E314B', river: '#5DA9B8', sun: '#F7D37E' },
+    medieval: { sky1: '#3A284F', sky2: '#1F162B', hill1: '#4F386B', hill2: '#342447', river: '#64B2C4', sun: '#F2BC6E' }
+  };
+  const pal = eraPalettes[era] || eraPalettes.stone;
+
   let structuresSvg = '';
 
   // Campfire & Stone Age tents
@@ -386,8 +392,8 @@ function renderCivStageBanner() {
   if (huts >= 2) structuresSvg += `<polygon points="102,48 111,34 120,48" fill="#A6754B" stroke="#F2EFE6" stroke-width="0.7"/>`;
   if (huts >= 3) structuresSvg += `<polygon points="52,49 60,36 68,49" fill="#9E6D44" stroke="#F2EFE6" stroke-width="0.7"/>`;
 
-  // Hearth fire glow
-  structuresSvg += `<circle cx="98" cy="47" r="3" fill="#F0B45B"/><circle cx="98" cy="47" r="6" fill="#F0B45B" opacity="0.28"/>`;
+  // Hearth fire glow (animated flicker)
+  structuresSvg += `<circle cx="98" cy="47" r="3" fill="#F0B45B"/><circle class="svg-hearth-glow" cx="98" cy="47" r="6" fill="#F0B45B" opacity="0.28"/>`;
 
   // Granaries & Mudbrick Houses as player builds
   if (houses >= 1 || totalBuildings >= 2) {
@@ -398,11 +404,11 @@ function renderCivStageBanner() {
     structuresSvg += `<rect x="158" y="34" width="20" height="14" fill="#D4A074" stroke="#F2EFE6" stroke-width="0.7"/>`;
   }
 
-  // Smeltery chimneys & smoke in Bronze/Iron age
+  // Smeltery chimneys & drifting smoke in Bronze/Iron age
   if (kilns > 0 || getEraOrder(era) >= 1) {
     structuresSvg += `<rect x="190" y="28" width="12" height="20" fill="#7D5A46" stroke="#F2EFE6" stroke-width="0.7"/>`;
-    structuresSvg += `<circle cx="196" cy="22" r="3.5" fill="#D6D2C8" opacity="0.45"/>`;
-    structuresSvg += `<circle cx="201" cy="16" r="4.5" fill="#D6D2C8" opacity="0.3"/>`;
+    structuresSvg += `<circle class="svg-smoke-1" cx="196" cy="22" r="3.5" fill="#D6D2C8" opacity="0.45"/>`;
+    structuresSvg += `<circle class="svg-smoke-2" cx="201" cy="16" r="4.5" fill="#D6D2C8" opacity="0.3"/>`;
   }
 
   // Megalithic Standing Stones
@@ -436,7 +442,7 @@ function renderCivStageBanner() {
 
   // Harbor Colossus / Guild Spires / Cathedral
   if (hasColossus) {
-    structuresSvg += `<polygon points="365,48 370,18 375,48" fill="#F0B45B"/><circle cx="370" cy="15" r="3.5" fill="#F7D37E"/>`;
+    structuresSvg += `<polygon points="365,48 370,18 375,48" fill="#F0B45B"/><circle class="svg-sun-halo" cx="370" cy="15" r="3.5" fill="#F7D37E"/>`;
   }
   if (hasGuild || hasCathedral) {
     structuresSvg += `
@@ -446,7 +452,7 @@ function renderCivStageBanner() {
   }
 
   const starsSvg = hasStars
-    ? `<circle cx="45" cy="12" r="1.3" fill="#FFF"/><circle cx="115" cy="9" r="1.5" fill="#F7D37E"/><circle cx="170" cy="14" r="1.2" fill="#FFF"/><circle cx="290" cy="10" r="1.4" fill="#FFF"/>`
+    ? `<circle class="svg-star-twinkle" cx="45" cy="12" r="1.3" fill="#FFF"/><circle class="svg-star-twinkle-delayed" cx="115" cy="9" r="1.5" fill="#F7D37E"/><circle class="svg-star-twinkle" cx="170" cy="14" r="1.2" fill="#FFF"/><circle class="svg-star-twinkle-delayed" cx="290" cy="10" r="1.4" fill="#FFF"/>`
     : '';
 
   artEl.innerHTML = `
@@ -460,10 +466,10 @@ function renderCivStageBanner() {
       <rect width="460" height="56" fill="url(#skyGrad)" />
       ${starsSvg}
       <circle cx="425" cy="16" r="9" fill="${pal.sun}" opacity="0.88" />
-      <circle cx="425" cy="16" r="15" fill="${pal.sun}" opacity="0.18" />
+      <circle class="svg-sun-halo" cx="425" cy="16" r="15" fill="${pal.sun}" opacity="0.18" />
       <path d="M0,44 Q90,24 195,40 T390,34 L460,42 L460,56 L0,56 Z" fill="${pal.hill1}" />
       <path d="M0,48 Q140,36 270,47 T460,45 L460,56 L0,56 Z" fill="${pal.hill2}" />
-      <path d="M0,52 Q220,46 460,53 L460,56 L0,56 Z" fill="${pal.river}" opacity="0.85" />
+      <path class="svg-river-shimmer" d="M0,52 Q220,46 460,53 L460,56 L0,56 Z" fill="${pal.river}" opacity="0.85" />
       ${structuresSvg}
     </svg>
   `;
@@ -481,27 +487,44 @@ function renderHeader() {
   const ledger = document.getElementById('resource-ledger');
 
   const visibleRes = RESOURCES.filter((r) => getEraOrder(r.unlockedAt) <= getEraOrder(state.era));
-  ledger.innerHTML = visibleRes
-    .map((r) => {
-      const val = Math.floor(state.resources[r.id] || 0);
-      const cap = caps[r.id];
-      const rate = rates[r.id] || 0;
-      const rateStr = rate >= 0 ? `+${rate.toFixed(1)}/s` : `${rate.toFixed(1)}/s`;
-      const rateClass = rate > 0 ? 'rate-pos' : rate < 0 ? 'rate-neg' : '';
-      return `
-        <div class="res-cell">
+  if (ledger.children.length !== visibleRes.length) {
+    ledger.innerHTML = visibleRes
+      .map(
+        (r) => `
+        <div class="res-cell" data-res-cell="${r.id}">
           <div class="res-cell-top">
             <span>${r.name}</span>
-            <span class="tabular">${val}/${cap}</span>
+            <span class="tabular" data-res-val="${r.id}">0/0</span>
           </div>
           <div class="res-cell-bottom">
             <span>${r.crafted ? 'Refined' : 'Raw'}</span>
-            <span class="tabular ${rateClass}">${rateStr}</span>
+            <span class="tabular" data-res-rate="${r.id}">+0.0/s</span>
           </div>
+          <div class="res-cell-fill" data-res-fill="${r.id}" style="width: 0%"></div>
         </div>
-      `;
-    })
-    .join('');
+      `
+      )
+      .join('');
+  }
+
+  visibleRes.forEach((r) => {
+    const val = Math.floor(state.resources[r.id] || 0);
+    const cap = caps[r.id] || 1;
+    const rate = rates[r.id] || 0;
+    const pct = Math.min(100, Math.max(0, (val / cap) * 100));
+    const rateStr = rate >= 0 ? `+${rate.toFixed(1)}/s` : `${rate.toFixed(1)}/s`;
+    const rateClass = rate > 0 ? 'tabular rate-pos' : rate < 0 ? 'tabular rate-neg' : 'tabular';
+
+    const valEl = ledger.querySelector(`[data-res-val="${r.id}"]`);
+    const rateEl = ledger.querySelector(`[data-res-rate="${r.id}"]`);
+    const fillEl = ledger.querySelector(`[data-res-fill="${r.id}"]`);
+    if (valEl) valEl.textContent = `${val}/${cap}`;
+    if (rateEl) {
+      rateEl.textContent = rateStr;
+      rateEl.className = rateClass;
+    }
+    if (fillEl) fillEl.style.width = `${pct.toFixed(1)}%`;
+  });
 }
 
 function renderEventBanner() {
@@ -936,6 +959,18 @@ function renderAll() {
   renderTutorial();
 }
 
+function spawnFloatingFeedback(anchorEl, text, variant = '') {
+  if (!anchorEl) return;
+  const rect = anchorEl.getBoundingClientRect();
+  const badge = document.createElement('div');
+  badge.className = `floating-feedback ${variant}`.trim();
+  badge.textContent = text;
+  badge.style.left = `${rect.left + rect.width / 2}px`;
+  badge.style.top = `${rect.top + 8}px`;
+  document.body.appendChild(badge);
+  setTimeout(() => badge.remove(), 900);
+}
+
 /* USER INTERACTIONS */
 document.getElementById('workspace').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
@@ -947,10 +982,14 @@ document.getElementById('workspace').addEventListener('click', (e) => {
     const g = MANUAL_GATHER.find((x) => x.id === btn.dataset.gather);
     if (g) {
       const toolBoost = state.techs.includes('toolmaking') ? 1.5 : 1;
+      const parts = [];
       Object.entries(g.gives).forEach(([resId, amt]) => {
         const gain = amt * toolBoost;
         state.resources[resId] = Math.min(caps[resId], (state.resources[resId] || 0) + gain);
+        const rName = RESOURCES.find((r) => r.id === resId)?.name || resId;
+        if (gain >= 1) parts.push(`+${Number.isInteger(gain) ? gain : gain.toFixed(1)} ${rName}`);
       });
+      spawnFloatingFeedback(btn, parts.join('  ') || '+Gathered');
       if (!state.tutorialDone && state.tutorialStep === 2) {
         state.tutorialStep = 3;
       }
@@ -965,6 +1004,8 @@ document.getElementById('workspace').addEventListener('click', (e) => {
     const jId = btn.dataset.jobAdd;
     if (state.pop - getAssignedPop() > 0) {
       state.jobs[jId] = (state.jobs[jId] || 0) + 1;
+      const jobObj = JOBS.find((x) => x.id === jId);
+      spawnFloatingFeedback(btn, `+1 ${jobObj ? jobObj.name : 'Worker'}`);
       if (!state.tutorialDone && state.tutorialStep === 3) {
         state.tutorialStep = 4;
       }
@@ -978,6 +1019,7 @@ document.getElementById('workspace').addEventListener('click', (e) => {
     const jId = btn.dataset.jobSub;
     if ((state.jobs[jId] || 0) > 0) {
       state.jobs[jId] -= 1;
+      spawnFloatingFeedback(btn, `-1 Worker`, 'ochre');
       renderAll();
       saveLocalState();
     }
@@ -993,6 +1035,7 @@ document.getElementById('workspace').addEventListener('click', (e) => {
       if (canAfford(cost)) {
         payCost(cost);
         state.buildings[b.id] = count + 1;
+        spawnFloatingFeedback(btn, `Built ${b.name}!`);
         addLog(`Constructed ${b.name} (Total: ${count + 1}).`);
         renderAll();
         saveLocalState();
@@ -1006,9 +1049,13 @@ document.getElementById('workspace').addEventListener('click', (e) => {
     const c = CRAFT_RECIPES.find((x) => x.id === btn.dataset.craft);
     if (c && canAfford(c.inputs)) {
       payCost(c.inputs);
+      const craftedText = [];
       Object.entries(c.outputs).forEach(([resId, amt]) => {
         state.resources[resId] = Math.min(caps[resId], (state.resources[resId] || 0) + amt);
+        const rName = RESOURCES.find((r) => r.id === resId)?.name || resId;
+        craftedText.push(`+${amt} ${rName}`);
       });
+      spawnFloatingFeedback(btn, craftedText.join(' '));
       renderAll();
       saveLocalState();
     }
@@ -1019,6 +1066,7 @@ document.getElementById('workspace').addEventListener('click', (e) => {
   if (btn.dataset.autocraft) {
     const cId = btn.dataset.autocraft;
     state.autoCraft[cId] = !state.autoCraft[cId];
+    spawnFloatingFeedback(btn, state.autoCraft[cId] ? 'Auto: ON' : 'Auto: OFF', 'ochre');
     renderAll();
     saveLocalState();
     return;
@@ -1030,6 +1078,7 @@ document.getElementById('workspace').addEventListener('click', (e) => {
     if (t && canAfford(t.cost)) {
       payCost(t.cost);
       state.techs.push(t.id);
+      spawnFloatingFeedback(btn, `Researched ${t.name}!`, 'ochre');
       if (t.unlocksEra) {
         state.era = t.unlocksEra;
         const eraObj = ERAS.find((er) => er.id === t.unlocksEra);
@@ -1052,6 +1101,7 @@ document.getElementById('workspace').addEventListener('click', (e) => {
       if (stage < w.stages && canAfford(cost)) {
         payCost(cost);
         state.wonders[w.id] = stage + 1;
+        spawnFloatingFeedback(btn, `${w.name} Stage ${stage + 1}!`, 'ochre');
         addLog(`Completed Stage ${stage + 1}/${w.stages} of ${w.name}!`);
         renderAll();
         saveLocalState();

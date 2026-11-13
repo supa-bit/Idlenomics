@@ -255,11 +255,25 @@ body.paper-mode .civ-stage-caption {
 }
 
 .res-cell {
+  position: relative;
+  overflow: hidden;
   background-color: var(--bg-header-cell);
   border: 1px solid var(--border-grid);
   border-radius: 3px;
-  padding: 5px 7px;
+  padding: 5px 7px 7px 7px;
   font-size: 13px;
+  transition: border-color 0.25s ease, transform 0.2s ease;
+}
+
+.res-cell-fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2.5px;
+  background: linear-gradient(90deg, var(--accent-moss), var(--accent-teal));
+  opacity: 0.72;
+  transition: width 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
 }
 
 .res-cell-top {
@@ -294,6 +308,7 @@ body.paper-mode .civ-stage-caption {
   border-bottom: 2px solid var(--accent-ochre);
   padding: 10px;
   flex-shrink: 0;
+  animation: fadeSlideDown 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .event-title {
@@ -320,6 +335,7 @@ body.paper-mode .civ-stage-caption {
 
 .tab-panel.active {
   display: flex;
+  animation: tabFadeSlide 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .section-block {
@@ -327,6 +343,7 @@ body.paper-mode .civ-stage-caption {
   border: 2px solid var(--border-grid);
   border-radius: 4px;
   backdrop-filter: blur(6px);
+  transition: border-color 0.3s ease;
 }
 
 .section-header {
@@ -384,6 +401,7 @@ body.paper-mode .civ-stage-caption {
   gap: 10px;
   padding: 10px;
   border-bottom: 1px solid var(--border-grid);
+  transition: background-color 0.2s ease;
 }
 
 .row-item:last-child {
@@ -423,6 +441,8 @@ body.paper-mode .civ-stage-caption {
 
 /* OVERSIZED BRUTALIST BUTTONS (52px+ TOUCH HEIGHT) */
 .btn-brutal {
+  position: relative;
+  overflow: hidden;
   min-height: 52px;
   padding: 8px 14px;
   background-color: var(--bg-button);
@@ -434,12 +454,17 @@ body.paper-mode .civ-stage-caption {
   font-weight: 700;
   cursor: pointer;
   text-align: center;
-  transition: transform 0.08s ease, background-color 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.18s ease, border-color 0.22s ease, box-shadow 0.25s ease;
+}
+
+.btn-brutal:hover:not(:disabled) {
+  background-color: var(--bg-button-active);
+  transform: translateY(-1px);
 }
 
 .btn-brutal:active:not(:disabled) {
   background-color: var(--bg-button-active);
-  transform: translateY(1px);
+  transform: scale(0.96) translateY(1px);
 }
 
 .btn-brutal:disabled {
@@ -465,14 +490,21 @@ body.paper-mode .civ-stage-caption {
   font-size: 12.5px;
   font-weight: 700;
   cursor: pointer;
+  transition: transform 0.12s ease, background-color 0.15s ease, border-color 0.2s ease;
+}
+
+.btn-small:active {
+  transform: scale(0.95);
 }
 
 .accent-moss {
   border-color: var(--accent-moss);
+  animation: subtleReadyMoss 3.2s infinite ease-in-out;
 }
 
 .accent-ochre {
   border-color: var(--accent-ochre);
+  animation: subtleReadyOchre 3.2s infinite ease-in-out;
 }
 
 .accent-terra {
@@ -513,6 +545,12 @@ body.paper-mode .civ-stage-caption {
   font-size: 14px;
   user-select: text;
   -webkit-user-select: text;
+  transition: border-color 0.2s ease;
+}
+
+.brutal-input:focus {
+  outline: none;
+  border-color: var(--accent-teal);
 }
 
 .save-textarea {
@@ -548,6 +586,7 @@ body.paper-mode .civ-stage-caption {
 .log-entry {
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border-grid);
+  animation: fadeSlideDown 0.25s ease-out;
 }
 
 .empty-row {
@@ -572,11 +611,13 @@ body.paper-mode .civ-stage-caption {
   color: var(--text-muted);
   border: none;
   border-right: 1px solid var(--border-grid);
+  border-top: 3px solid transparent;
   font-family: inherit;
   font-size: 12.5px;
   font-weight: 700;
   cursor: pointer;
   padding: 4px;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 .nav-btn:last-child {
@@ -627,7 +668,8 @@ body.paper-mode .civ-stage-caption {
   padding: 12px 14px;
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.65);
   pointer-events: auto;
-  transition: top 0.22s ease, bottom 0.22s ease;
+  transition: top 0.26s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: tabFadeSlide 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .tutorial-arrow {
@@ -636,6 +678,7 @@ body.paper-mode .civ-stage-caption {
   height: 14px;
   background-color: var(--bg-header-cell);
   transform: rotate(45deg);
+  transition: left 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .tutorial-arrow.arrow-up {
@@ -701,4 +744,174 @@ body.paper-mode .civ-stage-caption {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+}
+
+/* SUBTLE AMBIENT & FEEDBACK ANIMATIONS */
+@keyframes tabFadeSlide {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes subtleReadyMoss {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(133, 209, 124, 0);
+  }
+  50% {
+    box-shadow: 0 0 10px 1px rgba(133, 209, 124, 0.22);
+  }
+}
+
+@keyframes subtleReadyOchre {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(240, 180, 91, 0);
+  }
+  50% {
+    box-shadow: 0 0 10px 1px rgba(240, 180, 91, 0.24);
+  }
+}
+
+/* SVG Landscape Ambient Keyframes */
+.svg-sun-halo {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sunBreathe 5.5s infinite ease-in-out;
+}
+
+.svg-hearth-glow {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: hearthFlicker 2.4s infinite ease-in-out;
+}
+
+.svg-smoke-1 {
+  animation: smokeDrift 4.2s infinite ease-in-out;
+}
+
+.svg-smoke-2 {
+  animation: smokeDrift 4.2s infinite ease-in-out 1.8s;
+}
+
+.svg-star-twinkle {
+  animation: starTwinkle 3.6s infinite ease-in-out;
+}
+
+.svg-star-twinkle-delayed {
+  animation: starTwinkle 3.6s infinite ease-in-out 1.7s;
+}
+
+.svg-river-shimmer {
+  animation: riverFlow 4.8s infinite ease-in-out;
+}
+
+@keyframes sunBreathe {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.18;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.30;
+  }
+}
+
+@keyframes hearthFlicker {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.28;
+  }
+  50% {
+    transform: scale(1.26);
+    opacity: 0.46;
+  }
+}
+
+@keyframes smokeDrift {
+  0%, 100% {
+    transform: translate(0, 0) scale(0.95);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translate(2.5px, -3.5px) scale(1.12);
+    opacity: 0.18;
+  }
+}
+
+@keyframes starTwinkle {
+  0%, 100% {
+    opacity: 0.92;
+  }
+  50% {
+    opacity: 0.32;
+  }
+}
+
+@keyframes riverFlow {
+  0%, 100% {
+    opacity: 0.80;
+  }
+  50% {
+    opacity: 0.96;
+  }
+}
+
+/* Floating Action Feedback Badge */
+.floating-feedback {
+  position: fixed;
+  z-index: 1100;
+  pointer-events: none;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--accent-moss);
+  background: var(--bg-header-cell);
+  border: 1.5px solid var(--accent-moss);
+  border-radius: 999px;
+  padding: 2px 9px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42);
+  transform: translate(-50%, -50%);
+  animation: floatUpFade 0.88s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.floating-feedback.ochre {
+  color: var(--accent-ochre);
+  border-color: var(--accent-ochre);
+}
+
+@keyframes floatUpFade {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -20%) scale(0.9);
+  }
+  20% {
+    opacity: 1;
+    transform: translate(-50%, -65%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -155%) scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
