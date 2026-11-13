@@ -12,6 +12,7 @@ import {
   TRADE_ROUTES,
   HISTORICAL_EVENTS
 } from './data.js';
+import { WorldBackdropRenderer } from './world-canvas.js';
 
 const LOCAL_SAVE_KEY = 'idlenomics_save_v1';
 const LOCAL_SUPA_CONFIG_KEY = 'idlenomics_supa_config_v1';
@@ -331,20 +332,20 @@ function checkOfflineProgress() {
   }
 }
 
-let lastSkylineKey = '';
+const worldBackdrop = new WorldBackdropRenderer('world-bg-canvas');
 
 /* RENDER UI (CALM 1-SECOND HEARTBEAT) */
 function renderCivStageBanner() {
-  const artEl = document.getElementById('civ-stage-art');
+  worldBackdrop.updateState(state);
+
   const capEl = document.getElementById('civ-stage-caption');
-  if (!artEl || !capEl) return;
+  if (!capEl) return;
 
   const era = state.era || 'stone';
   const techCount = state.techs.length;
   const totalBuildings = Object.values(state.buildings).reduce((a, b) => a + b, 0);
   const totalWonders = Object.values(state.wonders).reduce((a, b) => a + b, 0);
 
-  // Determine settlement evolution caption
   let stageLabel = 'Nomadic Riverbank Camp';
   if (era === 'stone') {
     if (techCount >= 3 || totalBuildings >= 3) stageLabel = 'Neolithic Timber Village';
@@ -359,120 +360,6 @@ function renderCivStageBanner() {
     stageLabel = totalWonders >= 3 ? 'Grand Sovereign Realm' : 'High Feudal Trade Capital';
   }
   capEl.textContent = `${stageLabel} • ${state.pop} Citizens • ${techCount} Techs`;
-
-  // Dynamic elements that appear as the player builds & researches
-  const huts = Math.min(5, Math.max(1, (state.buildings.hide_tent || 0) + (state.buildings.forager_hut || 0) + 1));
-  const houses = Math.min(4, (state.buildings.mud_brick_hut || 0) + (state.buildings.granary || 0));
-  const kilns = (state.buildings.smeltery || 0) + (state.buildings.copper_mine || 0);
-  const hasAqueduct = (state.buildings.aqueduct || 0) > 0 || era === 'classical' || era === 'medieval';
-  const hasGuild = (state.buildings.guild_hall || 0) > 0 || era === 'medieval';
-  const hasStars = state.techs.includes('oral_tradition');
-  const hasMegalith = (state.wonders.megalith || 0) > 0 || state.techs.includes('masonry');
-  const hasZiggurat = (state.wonders.ziggurat || 0) > 0;
-  const hasColossus = (state.wonders.colossus || 0) > 0;
-  const hasCathedral = (state.wonders.cathedral || 0) > 0;
-
-  const skylineKey = `${era}-${huts}-${houses}-${kilns}-${totalBuildings}-${hasAqueduct}-${hasGuild}-${hasStars}-${hasMegalith}-${hasZiggurat}-${hasColossus}-${hasCathedral}`;
-  if (skylineKey === lastSkylineKey && artEl.innerHTML) return;
-  lastSkylineKey = skylineKey;
-
-  const eraPalettes = {
-    stone: { sky1: '#233829', sky2: '#152219', hill1: '#2E4633', hill2: '#223326', river: '#3B7A78', sun: '#F0B45B' },
-    bronze: { sky1: '#422E1E', sky2: '#241911', hill1: '#573D28', hill2: '#3B291B', river: '#4A8986', sun: '#F6C163' },
-    iron: { sky1: '#273547', sky2: '#161E29', hill1: '#37485E', hill2: '#253242', river: '#5299A3', sun: '#E8A86B' },
-    classical: { sky1: '#313552', sky2: '#1C1E30', hill1: '#45496E', hill2: '#2E314B', river: '#5DA9B8', sun: '#F7D37E' },
-    medieval: { sky1: '#3A284F', sky2: '#1F162B', hill1: '#4F386B', hill2: '#342447', river: '#64B2C4', sun: '#F2BC6E' }
-  };
-  const pal = eraPalettes[era] || eraPalettes.stone;
-
-  let structuresSvg = '';
-
-  // Campfire & Stone Age tents
-  structuresSvg += `<polygon points="75,48 85,32 95,48" fill="#B88456" stroke="#F2EFE6" stroke-width="0.8"/>`;
-  if (huts >= 2) structuresSvg += `<polygon points="102,48 111,34 120,48" fill="#A6754B" stroke="#F2EFE6" stroke-width="0.7"/>`;
-  if (huts >= 3) structuresSvg += `<polygon points="52,49 60,36 68,49" fill="#9E6D44" stroke="#F2EFE6" stroke-width="0.7"/>`;
-
-  // Hearth fire glow (animated flicker)
-  structuresSvg += `<circle cx="98" cy="47" r="3" fill="#F0B45B"/><circle class="svg-hearth-glow" cx="98" cy="47" r="6" fill="#F0B45B" opacity="0.28"/>`;
-
-  // Granaries & Mudbrick Houses as player builds
-  if (houses >= 1 || totalBuildings >= 2) {
-    structuresSvg += `<rect x="135" y="36" width="18" height="12" fill="#C99366" stroke="#F2EFE6" stroke-width="0.7"/>`;
-    structuresSvg += `<polygon points="133,36 144,29 155,36" fill="#8C583A"/>`;
-  }
-  if (houses >= 2 || totalBuildings >= 4) {
-    structuresSvg += `<rect x="158" y="34" width="20" height="14" fill="#D4A074" stroke="#F2EFE6" stroke-width="0.7"/>`;
-  }
-
-  // Smeltery chimneys & drifting smoke in Bronze/Iron age
-  if (kilns > 0 || getEraOrder(era) >= 1) {
-    structuresSvg += `<rect x="190" y="28" width="12" height="20" fill="#7D5A46" stroke="#F2EFE6" stroke-width="0.7"/>`;
-    structuresSvg += `<circle class="svg-smoke-1" cx="196" cy="22" r="3.5" fill="#D6D2C8" opacity="0.45"/>`;
-    structuresSvg += `<circle class="svg-smoke-2" cx="201" cy="16" r="4.5" fill="#D6D2C8" opacity="0.3"/>`;
-  }
-
-  // Megalithic Standing Stones
-  if (hasMegalith) {
-    structuresSvg += `
-      <rect x="25" y="33" width="5" height="15" fill="#9BA69E"/>
-      <rect x="36" y="33" width="5" height="15" fill="#9BA69E"/>
-      <rect x="23" y="30" width="20" height="4" fill="#B6C0B8"/>
-    `;
-  }
-
-  // Ziggurat
-  if (hasZiggurat) {
-    structuresSvg += `
-      <rect x="220" y="38" width="38" height="10" fill="#C99255"/>
-      <rect x="226" y="30" width="26" height="8" fill="#DDA666"/>
-      <rect x="232" y="23" width="14" height="7" fill="#F0B45B"/>
-    `;
-  }
-
-  // Classical Aqueduct arches
-  if (hasAqueduct) {
-    structuresSvg += `
-      <rect x="268" y="26" width="75" height="4" fill="#D8D2C5"/>
-      <rect x="272" y="30" width="5" height="18" fill="#C2B9A7"/>
-      <rect x="292" y="30" width="5" height="18" fill="#C2B9A7"/>
-      <rect x="312" y="30" width="5" height="18" fill="#C2B9A7"/>
-      <rect x="332" y="30" width="5" height="18" fill="#C2B9A7"/>
-    `;
-  }
-
-  // Harbor Colossus / Guild Spires / Cathedral
-  if (hasColossus) {
-    structuresSvg += `<polygon points="365,48 370,18 375,48" fill="#F0B45B"/><circle class="svg-sun-halo" cx="370" cy="15" r="3.5" fill="#F7D37E"/>`;
-  }
-  if (hasGuild || hasCathedral) {
-    structuresSvg += `
-      <rect x="388" y="26" width="26" height="22" fill="#8E7CA6" stroke="#F2EFE6" stroke-width="0.7"/>
-      <polygon points="388,26 401,10 414,26" fill="#B8A4D4"/>
-    `;
-  }
-
-  const starsSvg = hasStars
-    ? `<circle class="svg-star-twinkle" cx="45" cy="12" r="1.3" fill="#FFF"/><circle class="svg-star-twinkle-delayed" cx="115" cy="9" r="1.5" fill="#F7D37E"/><circle class="svg-star-twinkle" cx="170" cy="14" r="1.2" fill="#FFF"/><circle class="svg-star-twinkle-delayed" cx="290" cy="10" r="1.4" fill="#FFF"/>`
-    : '';
-
-  artEl.innerHTML = `
-    <svg viewBox="0 0 460 56" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${pal.sky1}" />
-          <stop offset="100%" stop-color="${pal.sky2}" />
-        </linearGradient>
-      </defs>
-      <rect width="460" height="56" fill="url(#skyGrad)" />
-      ${starsSvg}
-      <circle cx="425" cy="16" r="9" fill="${pal.sun}" opacity="0.88" />
-      <circle class="svg-sun-halo" cx="425" cy="16" r="15" fill="${pal.sun}" opacity="0.18" />
-      <path d="M0,44 Q90,24 195,40 T390,34 L460,42 L460,56 L0,56 Z" fill="${pal.hill1}" />
-      <path d="M0,48 Q140,36 270,47 T460,45 L460,56 L0,56 Z" fill="${pal.hill2}" />
-      <path class="svg-river-shimmer" d="M0,52 Q220,46 460,53 L460,56 L0,56 Z" fill="${pal.river}" opacity="0.85" />
-      ${structuresSvg}
-    </svg>
-  `;
 }
 
 function renderHeader() {
@@ -1230,7 +1117,15 @@ document.getElementById('event-banner').addEventListener('click', (e) => {
   saveLocalState();
 });
 
-// Theme Toggle & Tutorial Controls
+// World View Toggle, Theme Toggle & Tutorial Controls
+const peekBtn = document.getElementById('btn-peek-world');
+if (peekBtn) {
+  peekBtn.addEventListener('click', () => {
+    const active = document.body.classList.toggle('world-peek-active');
+    peekBtn.textContent = active ? '✕ Show UI' : '👁 World View';
+  });
+}
+
 document.getElementById('btn-theme').addEventListener('click', () => {
   state.paperMode = !state.paperMode;
   renderHeader();
