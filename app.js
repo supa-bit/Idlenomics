@@ -15,6 +15,7 @@ import {
 import * as economy from './simulation.js';
 import { initSettings } from './settings.js';
 import { initInsightsUI, formatDuration } from './insights-ui.js';
+import { OPENING_MILESTONES, evaluateOpeningSession, getVisibleResources } from './opening-guide.js';
 import { WorldBackdropRenderer } from './world-canvas.js';
 
 const LOCAL_SAVE_KEY = 'idlenomics_save_v1';
@@ -60,6 +61,8 @@ function createDefaultState() {
     activeEvent: null,
     tutorialDone: false,
     tutorialStep: 0,
+    claimedMilestones: [],
+    openingDismissed: false,
     logs: [
       { time: 'Year 1', msg: 'Your nomadic band settles beside a sheltered river valley.' }
     ]
@@ -77,6 +80,9 @@ function loadLocalState() {
     const base = createDefaultState();
     const mergedJobs = { ...base.jobs, ...(parsed.jobs || {}) };
     const mergedResources = { ...base.resources, ...(parsed.resources || {}) };
+    const validMilestones = Array.isArray(parsed.claimedMilestones)
+      ? parsed.claimedMilestones.filter((id) => OPENING_MILESTONES.some((m) => m.id === id))
+      : [];
 
     return {
       ...base,
@@ -86,7 +92,9 @@ function loadLocalState() {
       jobs: mergedJobs,
       autoCraft: { ...base.autoCraft, ...(parsed.autoCraft || {}) },
       wonders: { ...base.wonders, ...(parsed.wonders || {}) },
-      units: { ...base.units, ...(parsed.units || {}) }
+      units: { ...base.units, ...(parsed.units || {}) },
+      claimedMilestones: validMilestones,
+      openingDismissed: Boolean(parsed.openingDismissed)
     };
   } catch (e) {
     return createDefaultState();
@@ -249,8 +257,10 @@ function renderHeader() {
   const diag = economy.getEconomyDiagnostics(state);
   const ledger = document.getElementById('resource-ledger');
 
-  const visibleRes = RESOURCES.filter((r) => getEraOrder(r.unlockedAt) <= getEraOrder(state.era));
-  if (ledger.children.length !== visibleRes.length) {
+  const visibleRes = getVisibleResources(state, RESOURCES, getEraOrder);
+  const currentSignature = visibleRes.map((r) => r.id).join(',');
+  if (ledger.dataset.resSignature !== currentSignature) {
+    ledger.dataset.resSignature = currentSignature;
     ledger.innerHTML = visibleRes
       .map(
         (r) => `
@@ -594,29 +604,110 @@ function switchTab(tabId) {
   });
 }
 
+function renderOpeningArcCard() {
+  const card = document.getElementById('opening-arc-card');
+  if (!card) return;
+
+  const caps = getResourceCaps();
+  const status = evaluateOpeningSession(state, caps, addLog, spawnFloatingFeedback);
+
+  // Hide if dismissed or if all milestones are done and player is beyond Stone Age
+  if (state.openingDismissed || (status.allDone && state.era !== 'stone')) {
+    card.classList.add('hidden');
+    return;
+  }
+
+  card.classList.remove('hidden');
+
+  const stepsPills = OPENING_MILESTONES.map((m) => {
+    const done = state.claimedMilestones.includes(m.id);
+    const current = status.activeMilestone && status.activeMilestone.id === m.id;
+    const cls = done ? 'arc-step-pill done' : current ? 'arc-step-pill active' : 'arc-step-pill';
+    return `<span class="${cls}" title="${m.stepNum}. ${m.title}">${done ? '✓' : m.stepNum}</span>`;
+  }).join('');
+
+  if (status.allDone) {
+    const bronzeTech = TECHS.find((t) => t.id === 'copper_mining');
+    const bronzeCost = bronzeTech ? formatCost(bronzeTech.cost) : '';
+    card.innerHTML = `
+      <div class="opening-arc-head">
+        <div class="opening-arc-title-wrap">
+          <span class="badge-inline">FOUNDER'S PATH COMPLETE · 7/7</span>
+          <strong>Ready for the Dawn of the Bronze Age!</strong>
+        </div>
+        <div class="opening-arc-controls">
+          <div class="arc-step-strip">${stepsPills}</div>
+          <button type="button" class="btn-small" data-opening-dismiss="1">Dismiss ×</button>
+        </div>
+      </div>
+      <div class="opening-arc-body">
+        <div class="opening-arc-info">
+          <div class="row-sub">Your river camp has grown into a self-sustaining Neolithic village with steady Food, Timber, Stone, Science, and Tools. Research <strong>Dawn of the Bronze Age</strong> in Craft &amp; Tech to enter the next epoch!</div>
+          <div class="row-cost tabular">Next Epoch Milestone: ${bronzeCost}</div>
+        </div>
+        <div class="opening-arc-actions">
+          <button type="button" class="btn-brutal accent-ochre" data-opening-focus="tab-craft" data-opening-selector='button[data-tech="copper_mining"]'>Open Bronze Age Tech →</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const m = status.activeMilestone;
+  const prog = m.progress(state);
+  const pct = prog.target > 0 ? Math.min(100, Math.round((prog.current / prog.target) * 100)) : 0;
+
+  card.innerHTML = `
+    <div class="opening-arc-head">
+      <div class="opening-arc-title-wrap">
+        <span class="opening-arc-badge">${m.badge}</span>
+        <strong class="opening-arc-title">${m.stepNum}. ${m.title}</strong>
+      </div>
+      <div class="opening-arc-controls">
+        <div class="arc-step-strip" aria-label="Opening milestone progress">${stepsPills}</div>
+        <button type="button" class="btn-small" data-opening-dismiss="1" title="Hide Founder's Path tracker (reopen anytime via ? Guide)">Hide</button>
+      </div>
+    </div>
+    <div class="opening-arc-body">
+      <div class="opening-arc-info">
+        <div class="opening-arc-goal">${m.goalText}</div>
+        <div class="row-sub">${m.whyText}</div>
+        <div class="opening-arc-meta">
+          <span class="tabular"><strong>Progress:</strong> ${prog.label}</span>
+          <span class="opening-arc-reward"><strong>Reward:</strong> ${m.rewardText}</span>
+        </div>
+        <div class="opening-arc-bar"><div class="opening-arc-bar-fill" style="width: ${pct}%"></div></div>
+      </div>
+      <div class="opening-arc-actions">
+        <button type="button" class="btn-brutal accent-moss" data-opening-focus="${m.tab}" data-opening-selector='${m.selector}'>${m.actionLabel} →</button>
+      </div>
+    </div>
+  `;
+}
+
 /* INTERACTIVE TUTORIAL SYSTEM */
 const TUTORIAL_STEPS = [
   {
     badge: 'WELCOME GREETING',
     title: 'Hello & Welcome to Idlenomics!',
-    body: 'Your nomadic band has just settled beside a sheltered river valley at the dawn of the Stone Age. Together, we will guide your fledgling camp into a thriving civilization across the ages.',
-    hint: 'Tap "Start Tour →" below for a quick walkthrough of your controls!',
+    body: 'Your nomadic band has just settled beside a sheltered river valley at the dawn of the Stone Age. Follow the Founder\'s Path milestones at the top to earn bonus stockpiles as you build your first thriving village.',
+    hint: 'Tap "Start Tour →" below for a quick interactive walkthrough of your controls!',
     nextLabel: 'Start Tour →',
     tab: 'tab-settlement',
-    selector: '#civ-stage-banner'
+    selector: '#opening-arc-card'
   },
   {
     badge: 'STEP 1 OF 6',
-    title: '1. Resource Ledger & Net Rates',
-    body: 'This top ledger tracks your stockpiles, storage caps, and per-second production rates. Each citizen consumes 0.5 Food/s—1 Farmer is already pre-assigned so your Food grows steadily.',
-    hint: 'Tip: Watch your +Food/s and +Wood/s rates in green.',
+    title: '1. Resource Ledger & Diagnostics',
+    body: 'This top ledger tracks your stockpiles, storage caps, and per-second rates. 1 Farmer is already pre-assigned so your Food grows (+0.1/s net). Click any resource cell anytime to open full production & bottleneck diagnostics!',
+    hint: 'Tip: New Stone Age resources (Hide, Science, Tools) appear as you discover them.',
     tab: 'tab-settlement',
     selector: '#resource-ledger'
   },
   {
     badge: 'STEP 2 OF 6',
-    title: '2. Manual Gathering',
-    body: 'Touch any gathering button to collect raw materials by hand. Early in the Stone Age, manual foraging gives you a quick burst of Food, Wood, Hide, and Stone.',
+    title: '2. Manual Gathering & First Milestone',
+    body: 'Touch any gathering button to collect raw materials by hand. Reaching 30 Food and 26 Wood completes Milestone 1 and awards a +10 Food, +10 Wood, +2 Hide hearth cache!',
     hint: 'Action: Tap "Forage Roots" (or press Next) to continue!',
     tab: 'tab-settlement',
     selector: 'button[data-gather="forage_food"]'
@@ -624,32 +715,32 @@ const TUTORIAL_STEPS = [
   {
     badge: 'STEP 3 OF 6',
     title: '3. Population & Labor Assignment',
-    body: 'Your settlement starts with 3 Citizens (1 Farmer, 2 Idle). Assign idle citizens to Woodcutter or Stonecutter so resources accumulate automatically while you are away.',
+    body: 'Your settlement starts with 3 Citizens (1 Farmer, 2 Idle). Assign both idle citizens to Woodcutter and Stonecutter to complete Milestone 2 and earn +12 Stone & +10 Wood!',
     hint: 'Action: Tap "+1" on Woodcutter or Farmer to assign an idle worker!',
     tab: 'tab-settlement',
     selector: 'button[data-job-add="woodcutter"]'
   },
   {
     badge: 'STEP 4 OF 6',
-    title: '4. Structures & Settlement Growth',
-    body: 'Structures provide passive production and raise your Population & Storage Caps. As you construct buildings and advance eras, the settlement landscape banner at the top visually evolves!',
-    hint: 'Gather Wood & Stone to construct Shelters, Camps, and Timber Yards.',
+    title: '4. Structures & Living World Growth',
+    body: 'Structures provide passive production and raise your Population & Storage Caps. Every structure you build appears in the living valley landscape behind your panels!',
+    hint: 'Build a Forager Camp (20 Wood, 10 Stone) or Hide Shelter to complete Milestone 3.',
     tab: 'tab-settlement',
     selector: '#building-list'
   },
   {
     badge: 'STEP 5 OF 6',
     title: '5. Technologies, Crafting & Eras',
-    body: 'Open the Craft & Tech tab to research breakthroughs like Oral Tradition and Flint Toolmaking. Researching Era milestones advances your civilization into the Bronze, Iron, Classical, and Medieval Ages.',
-    hint: 'Researching "Oral Tradition" (35 Food, 25 Wood) unlocks Science!',
+    body: 'Open the Craft & Tech tab to research Oral Tradition (35 Food, 25 Wood), unlocking Science, Sky Observation, and Elders/Scribes on your path to Flint Toolmaking and the Bronze Age.',
+    hint: 'Researching "Oral Tradition" completes Milestone 4 (+12 Science, +15 Stone)!',
     tab: 'tab-craft',
     selector: '#tech-list'
   },
   {
     badge: 'STEP 6 OF 6',
     title: '6. Wonders, Expeditions & Cloud Vault',
-    body: 'Explore the World tab to train garrisons, annex territory, and build monumental Wonders. Use the Vault tab anytime to back up your save string or sync 10 cloud snapshots via Supabase.',
-    hint: 'You can replay this guide anytime via the "? Guide" button at the top.',
+    body: 'Explore the World tab to train garrisons, annex territory, and build monumental Wonders. Use Settings or the Vault tab anytime to back up your save or sync snapshots.',
+    hint: 'You can replay this guide or reopen the Founder\'s Path anytime via "? Guide".',
     nextLabel: 'Finish Guide ✓',
     tab: 'tab-world',
     selector: '#bottom-nav'
@@ -685,7 +776,8 @@ function renderTutorial() {
   prevBtn.style.opacity = stepIdx === 0 ? '0.4' : '1';
   nextBtn.textContent = step.nextLabel || (stepIdx === TUTORIAL_STEPS.length - 1 ? 'Finish Guide ✓' : 'Next →');
 
-  const target = step.selector ? document.querySelector(step.selector) : null;
+  const rawTarget = step.selector ? document.querySelector(step.selector) : null;
+  const target = rawTarget && !rawTarget.classList.contains('hidden') ? rawTarget : null;
   const card = document.getElementById('tutorial-card');
   const arrow = document.getElementById('tutorial-arrow');
   const vw = window.innerWidth;
@@ -772,6 +864,7 @@ function goToTutorialStep(nextIdx) {
 }
 
 function renderAll() {
+  renderOpeningArcCard();
   renderHeader();
   renderEventBanner();
   renderSettlementTab();
@@ -1023,6 +1116,33 @@ document.getElementById('event-banner').addEventListener('click', (e) => {
   saveLocalState();
 });
 
+// Opening Founder's Path Card Actions
+const openingCardEl = document.getElementById('opening-arc-card');
+if (openingCardEl) {
+  openingCardEl.addEventListener('click', (e) => {
+    const dismissBtn = e.target.closest('[data-opening-dismiss]');
+    if (dismissBtn) {
+      state.openingDismissed = true;
+      saveLocalState();
+      renderAll();
+      return;
+    }
+    const focusBtn = e.target.closest('[data-opening-focus]');
+    if (focusBtn) {
+      const tabId = focusBtn.dataset.openingFocus;
+      const sel = focusBtn.dataset.openingSelector;
+      if (tabId) switchTab(tabId);
+      renderAll();
+      const targetEl = sel ? document.querySelector(sel) : null;
+      if (targetEl) {
+        targetEl.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        targetEl.classList.add('tutorial-highlight');
+        setTimeout(() => targetEl.classList.remove('tutorial-highlight'), 1600);
+      }
+    }
+  });
+}
+
 // World View Toggle, Theme Toggle & Tutorial Controls
 const peekBtn = document.getElementById('btn-peek-world');
 if (peekBtn) {
@@ -1040,6 +1160,7 @@ document.getElementById('btn-theme').addEventListener('click', () => {
 
 document.getElementById('btn-tutorial').addEventListener('click', () => {
   state.tutorialDone = false;
+  state.openingDismissed = false;
   goToTutorialStep(0);
 });
 
@@ -1226,7 +1347,10 @@ function restoreCivilization(raw,encoded=true){
   base.techs=value.techs.filter(t=>TECHS.some(x=>x.id===t));
   base.autoCraft=Object.fromEntries(CRAFT_RECIPES.map(r=>[r.id,value.autoCraft?.[r.id]===true]));
   base.simulation=economy.normalizeSimulation(value.simulation);
+  base.era=value.era;
   base.paperMode=Boolean(value.paperMode);base.tutorialDone=true;
+  base.claimedMilestones=Array.isArray(value.claimedMilestones)?value.claimedMilestones.filter(id=>OPENING_MILESTONES.some(m=>m.id===id)):[];
+  base.openingDismissed=Boolean(value.openingDismissed);
   base.logs=Array.isArray(value.logs)?value.logs.filter(log=>log&&typeof log.time==='string'&&typeof log.msg==='string').slice(0,100):base.logs;
   base.activeEvent=HISTORICAL_EVENTS.find(event=>event.id===value.activeEvent?.id)||null;
   if(!Number.isInteger(base.pop)||base.pop>1e7||Object.values(base.jobs).reduce((a,b)=>a+b,0)>base.pop)throw Error('Invalid population or worker assignments.');

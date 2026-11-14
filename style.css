@@ -178,7 +178,8 @@ html, body {
 body.world-peek-active #workspace,
 body.world-peek-active #bottom-nav,
 body.world-peek-active #resource-ledger,
-body.world-peek-active #event-banner {
+body.world-peek-active #event-banner,
+body.world-peek-active #opening-arc-card {
   opacity: 0.05;
   pointer-events: none;
   transition: opacity 0.35s ease;
@@ -187,7 +188,8 @@ body.world-peek-active #event-banner {
 #workspace,
 #bottom-nav,
 #resource-ledger,
-#event-banner {
+#event-banner,
+#opening-arc-card {
   transition: opacity 0.35s ease;
 }
 
@@ -1121,3 +1123,185 @@ body.settings-open { overflow:hidden; }
 .diag-table th { color: var(--text-muted); font-size: 0.84em; text-transform: uppercase; letter-spacing: 0.03em; }
 .diag-overflow-tag { color: var(--accent-ochre); font-weight: 700; }
 
+/* FOUNDER'S PATH OPENING ARC CARD */
+.opening-arc-card {
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 2px solid var(--border-strong);
+  padding: 10px 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.opening-arc-card.opening-arc-complete {
+  border-bottom-color: var(--accent-moss);
+}
+
+.opening-arc-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.opening-arc-kicker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.opening-arc-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--bg-button);
+  border: 1px solid var(--accent-gold);
+  color: var(--accent-gold);
+}
+
+.opening-arc-complete .opening-arc-badge {
+  border-color: var(--accent-moss);
+  color: var(--accent-moss);
+}
+
+.opening-arc-step-count {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.arc-step-strip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.arc-step-pill {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid var(--border-grid);
+  background: var(--bg-header-cell);
+  color: var(--text-muted);
+}
+
+.arc-step-pill.active {
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+  box-shadow: 0 0 0 2px rgba(242, 184, 75, 0.2);
+}
+
+.arc-step-pill.done {
+  border-color: var(--accent-moss);
+  background: rgba(86, 209, 138, 0.14);
+  color: var(--accent-moss);
+}
+
+.opening-arc-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.opening-arc-main {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.opening-arc-title {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 2px;
+}
+
+.opening-arc-desc {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.opening-arc-side {
+  flex: 0 1 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.opening-arc-progress-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+}
+
+.opening-arc-progress-label {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.opening-arc-reward {
+  color: var(--accent-gold);
+  font-weight: 700;
+}
+
+.opening-arc-bar {
+  width: 100%;
+  height: 7px;
+  background: var(--bg-header-cell);
+  border: 1px solid var(--border-grid);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.opening-arc-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-teal), var(--accent-moss));
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.opening-arc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.opening-arc-focus-btn {
+  padding: 5px 12px;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 680px) {
+  .opening-arc-card {
+    padding: 8px 12px 10px;
+  }
+  .opening-arc-side {
+    flex: 1 1 100%;
+  }
+  .opening-arc-actions {
+    justify-content: stretch;
+  }
+  .opening-arc-focus-btn {
+    width: 100%;
+  }
+}
