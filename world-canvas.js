@@ -4,7 +4,8 @@
  *
  * Coordinates: world units, +x right / +y down; 1000 units high. The camera
  * always uses ONE scale for both axes. Portrait crops the valley flanks; wide
- * screens reveal them. Eight independently translated planes have overscan.
+ * screens reveal them. Sky and mountains have depth parallax; the inhabited
+ * valley moves as one.
  * Buildings use seeded, collision-free plots in irregular village clearings;
  * type/index addresses survive growth. Off-camera architecture is culled.
  *
@@ -154,7 +155,7 @@ function riverBankX(y,side) {
   const erosion=(rockNoise(y*.041,side*7,851)-.5)*3.6+(rockNoise(y*.137,side*13,421)-.5)*1.4;
   return riverX(y)+side*riverWidth(y)+erosion*perspective;
 }
-function terrainHorizon(x) {return 540+Math.sin(x*.006)*14+Math.sin(x*.017)*5;}
+function terrainHorizon(x) {return 506+Math.sin(x*.006)*24+Math.sin(x*.013+2)*13;}
 function terrainColor(rgb) {return `rgb(${rgb.map(v=>Math.round(v)).join(',')})`;}
 class TerrainLayer {
   constructor({era,paper,palette:p,left,right,scale,deferBake=false}) {
@@ -677,7 +678,7 @@ class VegetationLayer {
     const eligible=(plant)=>{
       const box=this.bounds(plant,4);plant.bounds=box;
       if(protectedAreas.some(area=>overlaps(box,area)))return false;
-      // Check the full projected crown against water and the three roads.
+      // Keep the full projected crown clear of the river.
       for(let y=Math.max(540,box.top);y<=Math.min(1080,box.bottom);y+=5){
         const bankLeft=riverBankX(y,-1)-12,bankRight=riverBankX(y,1)+12;
         if(box.left<bankRight&&box.right>bankLeft)return false;
@@ -718,7 +719,7 @@ class VegetationLayer {
       const seed=(cell+250)*371+band*1313,x=cell*17+(rand(seed)-.5)*14;
       const openness=rockNoise(x*.006,band*3,71);
       if(rand(seed+6)>openness*.75+.2)continue;
-      const y=506+Math.sin(x*.006)*24+Math.sin(x*.013+2)*13+band*7+5;
+      const y=terrainHorizon(x)+band*7+5;
       const kind=this.species[rand(seed+3)>.2?0:Math.floor(rand(seed+4)*this.species.length)];
       this.drawPlant(c,{x,y,h:12+rand(seed+9)*24+band*7,kind,seed},0,false,band?.84:.48);
     }
@@ -1749,9 +1750,12 @@ export class WorldBackdropRenderer {
       this.mountains.paintRange(c,i-2);
     }
     if(i===4){
-      const pts=[[left,h],[left,550]];
-      for(let x=left;x<=right+30;x+=30)pts.push([x,506+Math.sin(x*.006)*24+Math.sin(x*.013+2)*13]);
-      pts.push([right,h]);c.save();poly(c,pts);c.clip();this.terrain.paintGround(c);c.restore();
+      // One continuous ground surface. Later passes add objects, never repaint
+      // land over distant tree crowns or introduce a second terrain horizon.
+      const pts=[[left,h]];
+      for(let x=left;x<=right+8;x+=8)pts.push([x,terrainHorizon(x)]);
+      pts.push([right,h]);c.save();poly(c,pts);c.clip();
+      this.terrain.paintGround(c);c.restore();
       this.vegetation.paintDistant(c,left,right);
       this._wonders(c,0);
       if(s.era==='iron')for(const x of [-380,370])this._watchtower(c,x,518);
@@ -1759,16 +1763,15 @@ export class WorldBackdropRenderer {
       if(s.era==='classical')this._temple(c,-225,512,1.05);
     }
     if(i===5){
-      c.save();c.beginPath();c.moveTo(left,h);
-      for(let x=left;x<=right+8;x+=8)c.lineTo(x,terrainHorizon(x));
-      c.lineTo(right,h);c.closePath();c.clip();
-      c.beginPath();c.rect(left,-100,right-left,h+200);riverPath(c,false);c.clip('evenodd');
-      this.terrain.paintGround(c);
+      c.save();c.beginPath();c.rect(left,-100,right-left,h+200);
+      riverPath(c,false);c.clip('evenodd');
       this.terrain.paintSurfaceDetails(c,left,right);
       this.terrain.paintBanks(c,left,right);
       this._quarry(c,-470,610);
-      this.vegetation.paintWoodland(c,left,right,this.terrain);
       this._fields(c,0,false);c.restore();
+      // Plant roots are checked against the river during placement. Paint full
+      // silhouettes without terrain clipping so crowns cannot be sliced off.
+      this.vegetation.paintWoodland(c,left,right,this.terrain);
     }
     if(i===6){
 
@@ -1779,8 +1782,9 @@ export class WorldBackdropRenderer {
     }
   }
   _visible(x,y,margin=70){return x>-this.half-margin&&x<this.half+margin&&y<this.worldHeight+margin&&y>-margin;}
+  _planeDepth(index){return index>=4?.55:[0,.08,.15,.25][index];}
   _plane(index,fn){
-    const c=this.ctx,depth=[0,.08,.15,.25,.38,.55,.76,1][index];
+    const c=this.ctx,depth=this._planeDepth(index);
     c.save();c.setTransform(this.dpr*this.scale,0,0,this.dpr*this.scale,this.dpr*(this.width/2+this.pointer.x*depth*15),this.dpr*this.pointer.y*depth*9);
     fn(c);c.restore();
   }
@@ -1789,7 +1793,7 @@ export class WorldBackdropRenderer {
     const c=this.ctx,s=this.state,p=this.p,t=this.reducedMotion?0:time;
     c.setTransform(this.dpr,0,0,this.dpr,0,0);c.globalAlpha=1;
     for(let i=0;i<7;i++){
-      const l=this.layers[i],depth=[0,.08,.15,.25,.38,.55,.76][i];
+      const l=this.layers[i],depth=this._planeDepth(i);
       c.drawImage(l.canvas,-l.pad+this.pointer.x*depth*15,-l.pad+this.pointer.y*depth*9,this.width+l.pad*2,this.height+l.pad*2);
       if(i===1)this._plane(1,cc=>this._skyMotion(cc,t));
       if(i===3)this._plane(3,cc=>this.mountains.paintMist(cc,t));
@@ -1999,10 +2003,9 @@ export class WorldBackdropRenderer {
     }
   }
   _foreground(c,t){
-    const p=this.p,s=this.state,left=-this.half-70,right=this.half+70;
-    const pts=[[left,1100],[left,956]];
-    for(let x=left;x<=right+20;x+=20)pts.push([x,962+Math.sin(x*.008)*16+Math.sin(x*.021)*6]);
-    pts.push([right,1100]);c.save();poly(c,pts);c.clip();this.terrain.paintGround(c);c.globalAlpha=.26;c.fillStyle=p[7];c.fillRect(left,930,right-left,200);c.restore();
+    const p=this.p,s=this.state;
+    // Foreground foliage shares the valley transform; the ground and river
+    // already extend beneath it and must not be covered by another land band.
     this.vegetation.paintForeground(c,this.half,t);
     if(!s.paperMode)for(let n=0;n<33;n++){
       const x=Math.sin(t*.08+n*7)*this.half,y=760+rand(n+90)*220+Math.sin(t*.3+n)*8;
