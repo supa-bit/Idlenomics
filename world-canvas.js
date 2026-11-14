@@ -124,10 +124,21 @@ function settlementAddress(type,index) {
   const {x,y}=settlementSites[family][rank];return{x,y};
 }
 function riverX(y) {
+  if(y<580){
+    // Shared Hermite bend through the foothills: the mountain stream turns
+    // into the valley with continuous position and tangent at both ends.
+    const t=clamp((y-440)/140,0,1),t2=t*t,t3=t2*t;
+    const u=60/580,end=175+60*u+65*Math.sin(u*TAU-.2);
+    const slope=(60+65*TAU*Math.cos(u*TAU-.2))/580;
+    return (2*t3-3*t2+1)*220+(t3-2*t2+t)*-100+(-2*t3+3*t2)*end+(t3-t2)*140*slope;
+  }
   const u=clamp((y-520)/580,0,1.15);
   return 175+60*u+65*Math.sin(u*TAU-.2);
 }
-function riverWidth(y) {const u=clamp((y-520)/580,0,1.15);return 12+45*Math.pow(u,1.22);}
+function riverWidth(y) {
+  if(y<580){const t=clamp((y-440)/140,0,1);return 6+(12+45*Math.pow(60/580,1.22)-6)*smooth01(t);}
+  const u=clamp((y-520)/580,0,1.15);return 12+45*Math.pow(u,1.22);
+}
 // Intersect each bank with the actual foothill silhouette, rather than starting
 // the river at a fixed screen row below the mountains.
 function riverSourceY(side) {
@@ -730,7 +741,9 @@ class VegetationLayer {
       if(rand(seed+6)>openness*.75+.2)continue;
       const y=terrainHorizon(x)+band*7+5;
       const kind=this.species[rand(seed+3)>.2?0:Math.floor(rand(seed+4)*this.species.length)];
-      this.drawPlant(c,{x,y,h:12+rand(seed+9)*24+band*7,kind,seed},0,false,band?.84:.48);
+      const h=12+rand(seed+9)*24+band*7,radius=this.radius(kind,h);
+      if(x+radius>riverBankX(y,-1)-3&&x-radius<riverBankX(y,1)+3)continue;
+      this.drawPlant(c,{x,y,h,kind,seed},0,false,band?.84:.48);
     }
   }
   paintWoodland(c,left,right,terrain=null){
@@ -968,8 +981,12 @@ class MountainAtmosphere {
       let previousBed=Infinity;
       for(let iz=0;iz<depthCount;iz++){
         const z=back+iz*dz,t=clamp(z/220,0,1);
-        const x=349+(mouth-349)*smooth01(t)+(Math.sin(t*14)*13+Math.sin(t*31)*3)*Math.sin(t*Math.PI);
-        const ix=clamp(Math.round((x-this.left)/dx-.5),0,width-1);
+        let x=349+(mouth-349)*smooth01(t)+(Math.sin(t*14)*13+Math.sin(t*31)*3)*Math.sin(t*Math.PI);
+        let ix=clamp(Math.round((x-this.left)/dx-.5),0,width-1);
+        const projected=base-heights[iz*width+ix]+5+z*.22;
+        const merge=smooth01((projected-410)/70);
+        x+=(riverX(projected)-x)*merge;
+        ix=clamp(Math.round((x-this.left)/dx-.5),0,width-1);
         const original=heights[iz*width+ix];
         const active=z>=18;
         const bed=active?Math.min(original-5,previousBed-dz*.18):original;
@@ -1046,9 +1063,14 @@ class MountainAtmosphere {
           blue+=((this.paper?218:219)-blue)*snow;
         }
         if(range===1&&drainage[iz]?.active){
-          const channel=drainage[iz],d=Math.abs(x-channel.x);
+          const channel=drainage[iz],merge=smooth01((projectedY-425)/60);
+          const center=channel.x+(riverX(projectedY)-channel.x)*merge;
+          const d=Math.abs(x-center);
           const irregular=rockNoise(x*.35,z*.26,628);
-          const wet=1-smooth01((d-channel.w*(.32+irregular*.22))/Math.max(1,channel.w*.20));
+          const mountainWet=1-smooth01((d-channel.w*(.32+irregular*.22))/Math.max(1,channel.w*.20));
+          const bankLeft=riverBankX(projectedY,-1),bankRight=riverBankX(projectedY,1);
+          const valleyWet=clamp(Math.min(x-bankLeft,bankRight-x)/dx+.5,0,1);
+          const wet=mountainWet+(valleyWet-mountainWet)*merge;
           const bank=(1-smooth01((d-channel.w*.9)/Math.max(2,channel.w*.7)))*(1-wet);
           red*=1-bank*.15;green*=1-bank*.13;blue*=1-bank*.08;
           if(wet>0){
@@ -1058,8 +1080,8 @@ class MountainAtmosphere {
             const slope=iz>0?(drainage[iz-1].bed-channel.bed)/dz:0;
             const cascade=smooth01((slope-.6)*.8)*smooth01((rockNoise(x*.31,z*.6,713)-.43)*4);
             const glacial=mixColor(this.paper?[138,168,170]:[98,131,147],target,t);
-            const water=mixColor(glacial,this.paper?[222,231,219]:[172,199,202],cascade*.72);
-            const strength=wet*(.80+irregular*.16)*smooth01((z-18)/16);
+            const water=mixColor(mixColor(glacial,this.paper?[222,231,219]:[172,199,202],cascade*.72),target,merge);
+            const strength=wet*((.80+irregular*.16)*(1-merge)+merge)*smooth01((z-18)/16);
             red+=(water[0]-red)*strength;green+=(water[1]-green)*strength;blue+=(water[2]-blue)*strength;
           }
         }
