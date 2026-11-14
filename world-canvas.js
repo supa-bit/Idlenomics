@@ -128,11 +128,20 @@ function riverX(y) {
   return 175+60*u+65*Math.sin(u*TAU-.2);
 }
 function riverWidth(y) {const u=clamp((y-520)/580,0,1.15);return 12+45*Math.pow(u,1.22);}
+// Intersect each bank with the actual foothill silhouette, rather than starting
+// the river at a fixed screen row below the mountains.
+function riverSourceY(side) {
+  let y=520;
+  for(let i=0;i<12;i++)y=terrainHorizon(riverBankX(y,side));
+  return y;
+}
 function riverPath(c, begin = true) {
   if (begin) c.beginPath();
-  c.moveTo(riverBankX(540,-1),540);
-  for(let y=545;y<=1080;y+=5) c.lineTo(riverBankX(y,-1),y);
-  for(let y=1080;y>=540;y-=5) c.lineTo(riverBankX(y,1),y);
+  const leftHead=riverSourceY(-1),rightHead=riverSourceY(1);
+  c.moveTo(riverBankX(leftHead,-1),leftHead);
+  for(let y=Math.ceil(leftHead/5)*5;y<=1080;y+=5)c.lineTo(riverBankX(y,-1),y);
+  for(let y=1080;y>=rightHead;y-=5)c.lineTo(riverBankX(y,1),y);
+  c.lineTo(riverBankX(rightHead,1),rightHead);
   c.closePath();
 }
 /* -------------------------------------------------------------------------
@@ -250,7 +259,7 @@ class TerrainLayer {
         r+=(sky[0]-r)*haze;g+=(sky[1]-g)*haze;b+=(sky[2]-b)*haze;
         const fleck=rough*(this.paper?6:4);
         pixels[out]=r+fleck;pixels[out+1]=g+fleck;pixels[out+2]=b+fleck*.75;pixels[out+3]=255;
-        if(y<540||x<left-dx||x>right+dx)continue;
+        if(y<terrainHorizon(x)||x<left-dx||x>right+dx)continue;
         const coverage=clamp(Math.min(x-left,right-x)/dx+.5,0,1);
         if(!coverage)continue;
         const shoreDistance=Math.min(x-left-barLeft,right-barRight-x);
@@ -267,7 +276,7 @@ class TerrainLayer {
         const flow=rockFbm((x-riverX(y))*.055,y*.022,533,3)-.5;
         const texture=(bedNoise-.5)*(exposed?13:(1-depth)*7+depth*3)+flow*8;
         wr+=(sky[0]-wr)*reflected;wg+=(sky[1]-wg)*reflected;wb+=(sky[2]-wb)*reflected;
-        wp[out]=wr+texture;wp[out+1]=wg+texture;wp[out+2]=wb+texture*.8;wp[out+3]=Math.round(coverage*smooth01((y-540)/18)*255);
+        wp[out]=wr+texture;wp[out+1]=wg+texture;wp[out+2]=wb+texture*.8;wp[out+3]=Math.round(coverage*255);
       }
     }
     gc.putImageData(land,0,0);wc.putImageData(wet,0,0);
@@ -287,7 +296,7 @@ class TerrainLayer {
   }
   paintWater(c){
     if(this.ready){const w=this.water;c.drawImage(w.canvas,this.left,w.top,this.span,w.bottom-w.top);}
-    else {const g=c.createLinearGradient(0,540,0,1050);g.addColorStop(0,'transparent');g.addColorStop(.04,this.p[8]);g.addColorStop(1,this.p[9]);c.fillStyle=g;c.fillRect(this.left,540,this.span,580);}
+    else {c.fillStyle=gradient(c,0,480,0,1050,[this.p[8],this.p[9]]);c.fillRect(this.left,440,this.span,680);}
   }
   paintSurfaceDetails(c,left,right){
     const lo=Math.floor(left/23),hi=Math.ceil(right/23);
@@ -1089,7 +1098,7 @@ class MountainAtmosphere {
 // The worker is assembled from the very same generator and small pure helpers.
 // No fetched scripts, runtime dependencies, server, or duplicated terrain model.
 function mountainWorkerSource() {
-  const helpers=[smooth01,mixColor,parseColor,rockHash,rockNoise,rockFbm,poly,gradient,line,ellipse,riverX,riverWidth,riverBankX,riverPath,terrainHorizon,terrainColor];
+  const helpers=[smooth01,mixColor,parseColor,rockHash,rockNoise,rockFbm,poly,gradient,line,ellipse,riverX,riverWidth,riverBankX,riverSourceY,riverPath,terrainHorizon,terrainColor];
   return [
     'const document={createElement:()=>new OffscreenCanvas(1,1)};const TAU=Math.PI*2;',
     `const clamp=${clamp.toString()},frac=${frac.toString()},rand=${rand.toString()};`,
