@@ -14,6 +14,7 @@ import {
 } from './data.js';
 import * as economy from './simulation.js';
 import { initSettings } from './settings.js';
+import { initInsightsUI, formatDuration } from './insights-ui.js';
 import { WorldBackdropRenderer } from './world-canvas.js';
 
 const LOCAL_SAVE_KEY = 'idlenomics_save_v1';
@@ -187,17 +188,23 @@ function addLog(msg) {
   if (state.logs.length > 40) state.logs.pop();
 }
 
+let insightsUI = null;
+
 /* SIMULATION & OFFLINE CALCULATION */
-function checkOfflineProgress() {
-  const result=economy.advanceTo(state,Date.now());
-  if(result.seconds>=5){
-    const seconds=result.seconds,mins=Math.floor(seconds/60);
-    const badge=document.getElementById('offline-badge');
-    badge.textContent=`+${seconds<60?seconds+'s':mins+'m'} Offline`;
-    badge.classList.remove('hidden');
-    addLog(`Simulated ${seconds}s of offline progress.${result.capped?' Offline progress is limited to 7 days.':''}`);
+function checkOfflineProgress(autoOpenModal = true) {
+  const result = economy.advanceTo(state, Date.now());
+  if (result.seconds >= 5 && result.summary) {
+    const seconds = result.seconds;
+    const totalBatches = Object.values(result.summary.batches || {}).reduce((a, b) => a + b, 0);
+    const parts = [`Simulated ${formatDuration(seconds)} (${seconds}s) of away progress.`];
+    if (result.summary.popGained > 0) parts.push(`+${result.summary.popGained} settler(s) joined.`);
+    if (totalBatches > 0) parts.push(`${totalBatches} auto-craft batch(es) completed.`);
+    if (result.capped) parts.push('Offline progress is limited to 7 days.');
+    addLog(parts.join(' '));
+    insightsUI?.recordReturnSummary(result.summary, autoOpenModal && seconds >= 15);
     saveLocalState();
   }
+  return result;
 }
 
 const worldBackdrop = new WorldBackdropRenderer('world-bg-canvas');
@@ -239,6 +246,7 @@ function renderHeader() {
 
   const caps = getResourceCaps();
   const rates = getNetRates();
+  const diag = economy.getEconomyDiagnostics(state);
   const ledger = document.getElementById('resource-ledger');
 
   const visibleRes = RESOURCES.filter((r) => getEraOrder(r.unlockedAt) <= getEraOrder(state.era));
@@ -246,13 +254,13 @@ function renderHeader() {
     ledger.innerHTML = visibleRes
       .map(
         (r) => `
-        <div class="res-cell" data-res-cell="${r.id}">
+        <div class="res-cell" data-res-cell="${r.id}" role="button" tabindex="0" title="Click to inspect ${r.name} production, consumption & bottlenecks">
           <div class="res-cell-top">
             <span>${r.name}</span>
             <span class="tabular" data-res-val="${r.id}">0/0</span>
           </div>
           <div class="res-cell-bottom">
-            <span>${r.crafted ? 'Refined' : 'Raw'}</span>
+            <span data-res-meta="${r.id}">${r.crafted ? 'Refined' : 'Raw'}</span>
             <span class="tabular" data-res-rate="${r.id}">+0.0/s</span>
           </div>
           <div class="res-cell-fill" data-res-fill="${r.id}" style="width: 0%"></div>
@@ -266,14 +274,30 @@ function renderHeader() {
     const val = Math.floor(state.resources[r.id] || 0);
     const cap = caps[r.id] || 1;
     const rate = rates[r.id] || 0;
+    const rd = diag.resources[r.id];
     const pct = Math.min(100, Math.max(0, (val / cap) * 100));
     const rateStr = rate >= 0 ? `+${rate.toFixed(1)}/s` : `${rate.toFixed(1)}/s`;
     const rateClass = rate > 0 ? 'tabular rate-pos' : rate < 0 ? 'tabular rate-neg' : 'tabular';
 
+    const cellEl = ledger.querySelector(`[data-res-cell="${r.id}"]`);
     const valEl = ledger.querySelector(`[data-res-val="${r.id}"]`);
+    const metaEl = ledger.querySelector(`[data-res-meta="${r.id}"]`);
     const rateEl = ledger.querySelector(`[data-res-rate="${r.id}"]`);
     const fillEl = ledger.querySelector(`[data-res-fill="${r.id}"]`);
     if (valEl) valEl.textContent = `${val}/${cap}`;
+    if (metaEl && rd) {
+      let tag = r.crafted ? 'Refined' : 'Raw';
+      if (rd.atCap && (rd.passiveNet > 0 || rd.potentialCraftOutput > 0)) tag = 'Full Cap';
+      else if (rd.passiveNet < 0) tag = 'Draining';
+      else if (rd.potentialCraftDemand > 0 || rd.potentialCraftOutput > 0) {
+        const cNet = rd.potentialCraftOutput - rd.potentialCraftDemand;
+        tag = `Craft ${cNet >= 0 ? '+' : ''}${cNet.toFixed(1)}/s`;
+      }
+      metaEl.textContent = tag;
+    }
+    if (cellEl && rd) {
+      cellEl.classList.toggle('res-cell-warn', rd.bottlenecks.length > 0);
+    }
     if (rateEl) {
       rateEl.textContent = rateStr;
       rateEl.className = rateClass;
@@ -322,11 +346,17 @@ function renderSettlementTab() {
     .join('');
 
   // Population & Labor
-  const maxPop = getMaxPop();
-  const assigned = getAssignedPop();
-  const idle = Math.max(0, state.pop - assigned);
-  document.getElementById('pop-summary').textContent = `Pop: ${state.pop}/${maxPop} | Idle: ${idle}`;
-  document.getElementById('pop-summary').title = 'A new settler arrives after 25 consecutive seconds with positive net food, more than 15 stored food, and spare housing.';
+  const diag = economy.getEconomyDiagnostics(state);
+  const popDiag = diag.population;
+  const maxPop = popDiag.max;
+  const idle = popDiag.idle;
+  const growthTag = popDiag.status === 'growing'
+    ? `Growing ${popDiag.growthSeconds}/${popDiag.secondsRequired}s`
+    : popDiag.status === 'housing_full'
+    ? 'Housing Full'
+    : 'Growth Paused';
+  document.getElementById('pop-summary').textContent = `Pop: ${state.pop}/${maxPop} | Idle: ${idle} · ${growthTag}`;
+  document.getElementById('pop-summary').title = popDiag.explanation;
 
   const workerList = document.getElementById('worker-list');
   workerList.innerHTML = JOBS.filter((j) => isUnlocked(j))
@@ -374,6 +404,7 @@ function renderSettlementTab() {
 
 function renderCraftAndTechTab() {
   const artisans = state.jobs.artisan || 0;
+  const diag = economy.getEconomyDiagnostics(state);
   document.getElementById('artisan-bonus-label').textContent = `Artisans: ${artisans} · ${(artisans * getGlobalMultipliers().craftSpeed / 4).toFixed(2)} cycles/s per enabled recipe · pauses when inputs or output space run out`;
 
   const craftList = document.getElementById('craft-list');
@@ -385,12 +416,15 @@ function renderCraftAndTechTab() {
       .map((c) => {
         const affordable = canAfford(c.inputs);
         const isAuto = Boolean(state.autoCraft[c.id]);
+        const rDiag = diag.recipes[c.id];
+        const statusClass = rDiag && isAuto && rDiag.status !== 'running' ? 'rate-neg' : 'label-muted';
         return `
           <div class="row-item">
             <div class="row-info">
               <div class="row-title">${c.name}</div>
               <div class="row-sub">${c.desc}</div>
               <div class="row-cost tabular">${formatCost(c.inputs)}</div>
+              ${rDiag ? `<div class="row-sub ${statusClass}" data-recipe-diag="${c.id}">${rDiag.explanation}</div>` : ''}
             </div>
             <div class="row-actions">
               <button class="btn-brutal" data-craft="${c.id}" ${!affordable ? 'disabled' : ''} type="button">Craft</button>
@@ -745,6 +779,7 @@ function renderAll() {
   renderWorldTab();
   renderChronicleTab();
   renderTutorial();
+  insightsUI?.refresh();
 }
 
 function spawnFloatingFeedback(anchorEl, text, variant = '') {
@@ -1210,6 +1245,9 @@ const settingsMenu=initSettings({
   recover:()=>{const raw=localStorage.getItem(BACKUP_KEY);if(!raw)throw Error('No recovery backup yet. A backup is created before an import or reset.');restoreCivilization(raw,false);},
   reset:()=>{backupCivilization();const next=createDefaultState();next.paperMode=state.paperMode;localStorage.setItem(LOCAL_SAVE_KEY,JSON.stringify(next));state=next;renderAll();}
 });
+insightsUI = initInsightsUI({
+  getState: () => state
+});
 document.getElementById('btn-export-save').addEventListener('click',()=>settingsMenu.open('save'));
 document.getElementById('btn-import-save').addEventListener('click',()=>settingsMenu.open('save'));
 document.getElementById('btn-hard-reset').addEventListener('click',()=>settingsMenu.open('reset'));
@@ -1217,7 +1255,7 @@ document.getElementById('btn-hard-reset').addEventListener('click',()=>settingsM
 /* LIFECYCLE & 1-SECOND HEARTBEAT */
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    checkOfflineProgress();
+    checkOfflineProgress(true);
     renderAll();
   } else {
     saveLocalState();
@@ -1237,14 +1275,14 @@ window.addEventListener('scroll', () => {
 }, { passive: true });
 
 // Settle elapsed time before economic actions change workers, production or costs.
-document.addEventListener('click',()=>economy.advanceTo(state,Date.now()),true);
+document.addEventListener('click', () => checkOfflineProgress(false), true);
 initVaultInputs();
-checkOfflineProgress();
+checkOfflineProgress(true);
 renderAll();
 
 setInterval(() => {
   if(document.hidden)return;
-  economy.advanceTo(state,Date.now());
+  checkOfflineProgress(false);
   saveLocalState();
   renderAll();
 }, 1000);
