@@ -32,15 +32,15 @@
 </head>
 <body>
   <header>
-    <div><span class="eyebrow" id="eyebrow">Idlenomics · Environment study 02</span><h1 id="study-title">Vegetation & woodland</h1></div>
+    <div><span class="eyebrow" id="eyebrow">Idlenomics · Environment study 03</span><h1 id="study-title">Terrain & riverbanks</h1></div>
     <div class="controls" aria-label="Preview controls">
       <div class="group"><select id="era" aria-label="Era"><option value="stone">Stone Age</option><option value="bronze" selected>Bronze Age</option><option value="iron">Iron Age</option><option value="classical">Classical Age</option><option value="medieval">Medieval Age</option></select></div>
       <div class="group" aria-label="Lighting"><button id="night" aria-pressed="false">Dusk</button><button id="day" aria-pressed="true">Daylight</button></div>
-      <div class="group" aria-label="View"><button id="mountains" aria-pressed="false">Mountains</button><button id="vegetation" aria-pressed="true">Vegetation</button><button id="scene" aria-pressed="false">Full scene</button></div>
+      <div class="group" aria-label="View"><button id="mountains" aria-pressed="false">Mountains</button><button id="vegetation" aria-pressed="false">Vegetation</button><button id="terrain" aria-pressed="true">Terrain</button><button id="scene" aria-pressed="false">Full scene</button></div>
       <div class="group"><button id="motion" aria-pressed="false">Play motion</button></div>
     </div>
   </header>
-  <main><figure><canvas id="study-output" role="img" aria-label="Isolated vegetation preview"></canvas><figcaption id="caption">Branch structure · leaf texture · species variations · wind</figcaption></figure></main>
+  <main><figure><canvas id="study-output" role="img" aria-label="Isolated terrain and riverbank preview"></canvas><figcaption id="caption">Sculpted terraces · worn paths · gravel bars · shallows</figcaption></figure></main>
   <footer><p>Inspect each component separately, then switch to the full scene to judge forest clusters, clearings, scale, and contrast around the settlement.</p><p>Space: pause or play · <a href="./">Return to the game</a></p></footer>
   <canvas id="world-bg-canvas" aria-hidden="true"></canvas>
   <script type="module">
@@ -53,17 +53,17 @@
     const params = new URLSearchParams(location.search);
     let era = ['stone','bronze','iron','classical','medieval'].includes(params.get('era')) ? params.get('era') : 'bronze';
     let paper = params.get('mode') !== 'dusk';
-    let view = ['mountains','vegetation','scene'].includes(params.get('view')) ? params.get('view') : 'vegetation';
+    let view = ['mountains','vegetation','terrain','scene'].includes(params.get('view')) ? params.get('view') : 'terrain';
     let playing = false, time = 12, last = null, raf = 0;
     const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-    const controls = Object.fromEntries(['era','day','night','mountains','vegetation','scene','motion','caption','study-title','eyebrow'].map(id => [id,document.getElementById(id)]));
+    const controls = Object.fromEntries(['era','day','night','mountains','vegetation','terrain','scene','motion','caption','study-title','eyebrow'].map(id => [id,document.getElementById(id)]));
     function synchronize() {
       controls.era.value = era;
-      for(const [id,active] of [['day',paper],['night',!paper],['mountains',view==='mountains'],['vegetation',view==='vegetation'],['scene',view==='scene'],['motion',playing]]) controls[id].setAttribute('aria-pressed',String(active));
+      for(const [id,active] of [['day',paper],['night',!paper],['mountains',view==='mountains'],['vegetation',view==='vegetation'],['terrain',view==='terrain'],['scene',view==='scene'],['motion',playing]]) controls[id].setAttribute('aria-pressed',String(active));
       controls.motion.textContent = playing ? 'Pause motion' : 'Play motion';
-      controls['study-title'].textContent = view==='vegetation' ? 'Vegetation & woodland' : view==='mountains' ? 'Mountains & atmosphere' : 'The living valley';
-      controls.eyebrow.textContent = `Idlenomics · ${view==='vegetation'?'Environment study 02':view==='mountains'?'Environment study 01':'Integration view'}`;
-      output.setAttribute('aria-label',`${era} age ${paper?'daylight':'dusk'} ${view==='scene'?'settlement scene':view==='vegetation'?'vegetation study':'mountain and atmosphere study'}`);
+      controls['study-title'].textContent = view==='terrain' ? 'Terrain & riverbanks' : view==='vegetation' ? 'Vegetation & woodland' : view==='mountains' ? 'Mountains & atmosphere' : 'The living valley';
+      controls.eyebrow.textContent = `Idlenomics · ${view==='terrain'?'Environment study 03':view==='vegetation'?'Environment study 02':view==='mountains'?'Environment study 01':'Integration view'}`;
+      output.setAttribute('aria-label',`${era} age ${paper?'daylight':'dusk'} ${view==='scene'?'settlement scene':view==='vegetation'?'vegetation study':view==='terrain'?'terrain and riverbank study':'mountain and atmosphere study'}`);
       const query = new URLSearchParams({era,mode:paper?'day':'dusk',view});
       history.replaceState(null,'',`?${query}`);
     }
@@ -75,15 +75,17 @@
       synchronize(); paint();
     }
     function paint() {
-      const waiting=view!=='vegetation'&&!renderer.mountains.ready;
+      const waiting=view!=='vegetation'&&(!renderer.mountains.ready||!renderer.terrain.ready);
       output.setAttribute('aria-busy',String(waiting));
       controls.caption.textContent = waiting ? 'Preparing this landscape…'
+        : view==='terrain' ? 'Sculpted terraces · worn paths · gravel bars · shallows'
         : view==='vegetation' ? 'Branch structure · leaf texture · species variations · wind'
         : view==='scene' ? 'Integration view · woodland groves, cultivated clearings, riverbanks and foreground foliage'
         : 'Composed ridgelines · branching gullies · directional rock lighting · distant haze';
       renderer.time = time;
       renderer.reducedMotion = reduced.matches && !playing;
       if(view==='scene')renderer.draw();
+      else if(view==='terrain')paintTerrain(renderer.reducedMotion?0:time);
       else if(view==='vegetation')paintVegetation(renderer.reducedMotion?0:time);
       else {
         const c=renderer.ctx;
@@ -95,11 +97,27 @@
         }
         renderer._plane(3,cc=>renderer.mountains.paintMist(cc,renderer.reducedMotion?0:time));
       }
-      const worldCrop=view==='scene'?renderer.worldHeight:view==='vegetation'?galleryHeight:565;
-      const height=Math.min(source.height,Math.round(source.height*worldCrop/renderer.worldHeight));
+      const cropTop=view==='terrain'?Math.min(540,renderer.worldHeight*.60):0;
+      const worldCrop=view==='scene'?renderer.worldHeight:view==='vegetation'?galleryHeight:view==='terrain'?renderer.worldHeight-cropTop:565;
+      const sourceY=Math.round(source.height*cropTop/renderer.worldHeight);
+      const height=Math.max(1,Math.min(source.height-sourceY,Math.round(source.height*worldCrop/renderer.worldHeight)));
       if(output.width!==source.width)output.width=source.width;
       if(output.height!==height)output.height=height;
-      ctx.drawImage(source,0,0,source.width,height,0,0,output.width,output.height);
+      ctx.drawImage(source,0,sourceY,source.width,height,0,0,output.width,output.height);
+    }
+    function paintTerrain(t) {
+      const c=renderer.ctx,terrain=renderer.terrain,left=-renderer.half-60,right=renderer.half+60;
+      c.setTransform(renderer.dpr*renderer.scale,0,0,renderer.dpr*renderer.scale,renderer.dpr*renderer.width/2,0);
+      c.globalAlpha=1;c.fillStyle=terrain.css.grass;c.fillRect(left,0,right-left,renderer.worldHeight+100);
+      // Use the same cached surfaces, shared geometry and compositing order as
+      // the game, with vegetation/buildings omitted for an unobstructed study.
+      c.save();
+      terrain.traceRiver(c);c.clip();terrain.paintWater(c);c.restore();terrain.paintWaterMotion(c,t);
+      c.save();c.beginPath();c.rect(left,0,right-left,renderer.worldHeight+100);
+      terrain.traceRiver(c,false);c.clip('evenodd');
+      terrain.paintGround(c);terrain.paintSurfaceDetails(c,left,right);terrain.paintBanks(c,left,right);
+      renderer._quarry(c,-470,610);renderer._fields(c,t,false);c.restore();
+      terrain.paintPaths(c,left,right);terrain.paintBridge(c);
     }
     let galleryHeight=720;
     function paintVegetation(t) {
@@ -145,6 +163,7 @@
     controls.night.addEventListener('click',()=>{paper=false;update();});
     controls.mountains.addEventListener('click',()=>{view='mountains';update();});
     controls.vegetation.addEventListener('click',()=>{view='vegetation';update();});
+    controls.terrain.addEventListener('click',()=>{view='terrain';update();});
     controls.scene.addEventListener('click',()=>{view='scene';update();});
     controls.motion.addEventListener('click',toggle);
     document.addEventListener('keydown',e=>{if(e.code==='Space'&&!['BUTTON','SELECT','INPUT'].includes(document.activeElement.tagName)){e.preventDefault();toggle();}});

@@ -13,7 +13,7 @@
  * Optional: pause(), resume(), seek(seconds), replay(), destroy(),
  *           enableGyroscope() (call from a user gesture on permissioned iOS).
  * Reduced motion freezes ambient animation and disables input parallax.
- * Mountain artwork bakes asynchronously in a self-contained worker; the canvas
+ * Mountain and ground artwork bake in a self-contained background worker; the canvas
  * dispatches "worldbackdropready" when the detailed landscape is available.
  * Worker-less browsers use a bounded idle-time CPU fallback.
  */
@@ -76,10 +76,346 @@ function riverX(y) { const u=(y-440)/560; return 40+275*u+66*Math.sin(u*TAU-1); 
 function riverWidth(y) { return 9+Math.pow(clamp((y-430)/570,0,1),1.3)*125; }
 function riverPath(c, begin = true) {
   if (begin) c.beginPath();
-  for(let y=540;y<=1080;y+=5) c.lineTo(riverX(y)-riverWidth(y),y);
-  for(let y=1080;y>=540;y-=5) c.lineTo(riverX(y)+riverWidth(y),y);
+  c.moveTo(riverBankX(540,-1),540);
+  for(let y=545;y<=1080;y+=5) c.lineTo(riverBankX(y,-1),y);
+  for(let y=1080;y>=540;y-=5) c.lineTo(riverBankX(y,1),y);
   c.closePath();
 }
+/* -------------------------------------------------------------------------
+ * TERRAIN & RIVERBANKS
+ * World-space shaded turf, cut terraces, damp soil, gravel spits and shallows.
+ * Surface maps bake alongside the mountains; paths and contact shadows remain
+ * on their object's depth plane. Road centers and settlement addresses do not move.
+ * ---------------------------------------------------------------------- */
+const TERRAIN_BIOMES = {
+  stone: {grass:[104,130,90],shade:[44,77,65],light:[151,165,117],soil:[122,107,78],stone:[146,153,131],water:[71,119,119]},
+  bronze: {grass:[148,150,94],shade:[78,99,67],light:[191,184,128],soil:[157,132,91],stone:[174,165,132],water:[86,139,133]},
+  iron: {grass:[108,132,111],shade:[48,79,79],light:[156,172,143],soil:[116,111,97],stone:[146,157,155],water:[76,132,151]},
+  classical: {grass:[127,153,107],shade:[53,94,77],light:[181,192,138],soil:[169,148,108],stone:[187,187,158],water:[79,149,154]},
+  medieval: {grass:[107,140,94],shade:[43,78,66],light:[164,181,123],soil:[136,118,85],stone:[157,162,138],water:[87,140,151]}
+};
+function riverBankX(y,side) {
+  // Fine erosion is separate from the large meander, so the navigable center
+  // and long-established settlement/boat coordinates retain their meaning.
+  const perspective=clamp((y-510)/530,.08,1);
+  const erosion=(rockNoise(y*.037,side*7,851)-.5)*10+(rockNoise(y*.113,side*13,421)-.5)*3.8;
+  return riverX(y)+side*riverWidth(y)+erosion*perspective;
+}
+function terrainHorizon(x) {return 540+Math.sin(x*.006)*14+Math.sin(x*.017)*5;}
+function terrainColor(rgb) {return `rgb(${rgb.map(v=>Math.round(v)).join(',')})`;}
+class TerrainLayer {
+  constructor({era,paper,palette:p,left,right,scale,deferBake=false}) {
+    this.era=era;this.paper=paper;this.p=p;
+    this.left=left-45;this.right=right+45;this.span=this.right-this.left;
+    this.rasterScale=Math.min(.76,Math.max(.46,scale*.76));
+    const biome=TERRAIN_BIOMES[era];this.colors={};
+    for(const [key,rgb]of Object.entries(biome))this.colors[key]=paper?rgb.slice():mixColor(rgb,[24,46,60],key==='water'?.16:.27);
+    this.css=Object.fromEntries(Object.entries(this.colors).map(([key,rgb])=>[key,terrainColor(rgb)]));
+    this.ready=false;this.ground=null;this.water=null;
+    this.bars=[{y:611,side:-1,length:29,reach:.32},{y:685,side:1,length:36,reach:.29},
+      {y:821,side:-1,length:41,reach:.31},{y:914,side:1,length:37,reach:.27},{y:1008,side:-1,length:44,reach:.30}];
+    this.rocks=[{x:-653,y:607,w:53,h:23,seed:71},{x:587,y:624,w:47,h:21,seed:131},
+      {x:-799,y:867,w:66,h:27,seed:211},{x:768,y:912,w:61,h:24,seed:307},
+      {x:35,y:919,w:44,h:18,seed:419}];
+    const crossing=side=>{
+      let x=riverBankX(733,side);
+      for(let i=0;i<9;i++)x=riverBankX(roadY(1,x)+4,side);
+      return x;
+    };
+    this.bridge={left:crossing(-1)-21,right:crossing(1)+21};
+    if(!deferBake)this.bake();
+  }
+  setOccupancy(areas,plants=[]){
+    // Decorative outcrops yield to later settlement growth without relocating
+    // any retained rock or existing building address. This is evaluated on the
+    // current state, never baked into the asynchronous surface maps.
+    this.activeRocks=this.rocks.filter(rock=>{
+      const box={left:rock.x-rock.w*.60,right:rock.x+rock.w*.60,top:rock.y-rock.h-3,bottom:rock.y+7};
+      if(areas.some(a=>box.left<a.right&&box.right>a.left&&box.top<a.bottom&&box.bottom>a.top))return false;
+      const lo=Math.max(-760,box.left),hi=Math.min(800,box.right);
+      if(lo<=hi)for(let row=0;row<3;row++){
+        const ys=[roadY(row,lo)+4,roadY(row,hi)+4,roadY(row,clamp(0,lo,hi))+4];
+        if(box.top<Math.max(...ys)+9&&box.bottom>Math.min(...ys)-9)return false;
+      }
+      for(let y=Math.max(540,box.top);y<=Math.min(1080,box.bottom);y+=4){
+        if(box.left<riverBankX(y,1)+3&&box.right>riverBankX(y,-1)-3)return false;
+      }
+      return !plants.some(p=>p.x+3>box.left&&p.x-3<box.right&&p.y+3>box.top&&p.y-3<box.bottom);
+    });
+  }
+  traceRiver(c,begin=true){riverPath(c,begin);}
+  shore(y){return {left:riverBankX(y,-1),right:riverBankX(y,1)};}
+  barReach(y,side){
+    let reach=0;
+    for(const bar of this.bars)if(bar.side===side){
+      const u=Math.abs((y-bar.y)/bar.length);
+      if(u<1)reach=Math.max(reach,riverWidth(y)*bar.reach*Math.pow(1-u*u,1.5));
+    }
+    return reach;
+  }
+  waterDepth(x,y){
+    const {left,right}=this.shore(y);
+    const wetLeft=left+this.barReach(y,-1),wetRight=right-this.barReach(y,1);
+    return clamp(Math.min(x-wetLeft,wetRight-x)/Math.max(6,Math.min(18,(right-left)*.14)),0,1);
+  }
+  relief(x,y){
+    const hillA=32*Math.exp(-Math.pow((x+630)/370,2)-Math.pow((y-635)/155,2));
+    const hillB=38*Math.exp(-Math.pow((x-660)/420,2)-Math.pow((y-700)/210,2));
+    const lowHill=16*Math.sin(x*.0036+.8)*Math.exp(-Math.pow((y-875)/240,2));
+    const grain=(rockFbm(x*.007,y*.018,241,3)-.5)*1.8;
+    const edge=Math.min(Math.abs(x-riverBankX(y,-1)),Math.abs(x-riverBankX(y,1)));
+    let bench=0;
+    const terraceFade=smooth01((x+985)/170)*smooth01((1035-x)/185);
+    for(let row=0;row<3;row++){
+      const d=y-roadY(row,x)-7-(rockNoise(x*.019,row,85)-.5)*1.7;
+      const cut=3+rockNoise(x*.009,row*3,77)*4;
+      bench-=cut*smooth01((d+1)/(5+rockNoise(x*.013,row,171)*3))*terraceFade;
+    }
+    return hillA+hillB+lowHill+grain+bench-(y-500)*.014-6*Math.exp(-edge/12);
+  }
+  bake(){
+    const top=440,bottom=1100,width=Math.min(2200,Math.ceil(this.span*this.rasterScale));
+    const height=Math.ceil((bottom-top)*this.rasterScale),dx=this.span/width,dy=(bottom-top)/height;
+    const values=new Float32Array(width*height);
+    for(let iy=0;iy<height;iy++){
+      const y=top+(iy+.5)*dy;
+      for(let ix=0;ix<width;ix++)values[iy*width+ix]=this.relief(this.left+(ix+.5)*dx,y);
+    }
+    const ground=document.createElement('canvas');ground.width=width;ground.height=height;
+    const gc=ground.getContext('2d'),land=gc.createImageData(width,height),pixels=land.data;
+    const water=document.createElement('canvas');water.width=width;water.height=height;
+    const wc=water.getContext('2d'),wet=wc.createImageData(width,height),wp=wet.data;
+    const {grass,shade,light,soil,stone}=this.colors,waterTone=this.colors.water;
+    const sky=parseColor(this.p[2]),lightX=this.era==='bronze'?-.7:.7;
+    for(let iy=0;iy<height;iy++){
+      const y=top+(iy+.5)*dy,{left,right}=this.shore(y);
+      const barLeft=this.barReach(y,-1),barRight=this.barReach(y,1);
+      for(let ix=0;ix<width;ix++){
+        const x=this.left+(ix+.5)*dx,k=iy*width+ix,out=k*4;
+        const gx=(values[iy*width+Math.min(width-1,ix+1)]-values[iy*width+Math.max(0,ix-1)])/(2*dx);
+        const gy=(values[Math.min(height-1,iy+1)*width+ix]-values[Math.max(0,iy-1)*width+ix])/(2*dy);
+        const normal=1/Math.sqrt(gx*gx*1.96+gy*gy*4+1),lambert=(-gx*1.4*lightX-gy*2*.55+1)*normal;
+        const rough=rockNoise(x*.27,y*.43,912)-.5;
+        const patch=rockNoise(x*.018,y*.041,913);
+        const slope=clamp((Math.abs(gy)-.14)*1.2,0,.65);
+        const edge=Math.min(Math.abs(x-left),Math.abs(x-right));
+        const dry=smooth01((patch-.48)*3)*.12;
+        const exposure=clamp(dry+slope*.5+Math.exp(-edge/16)*.72,0,.88);
+        const shadeMix=clamp((lambert-.40)/.9,0,1);
+        let r=shade[0]+(light[0]-shade[0])*shadeMix;
+        let g=shade[1]+(light[1]-shade[1])*shadeMix;
+        let b=shade[2]+(light[2]-shade[2])*shadeMix;
+        r=r*.74+grass[0]*.26;g=g*.74+grass[1]*.26;b=b*.74+grass[2]*.26;
+        r+=(soil[0]-r)*exposure;g+=(soil[1]-g)*exposure;b+=(soil[2]-b)*exposure;
+        const damp=Math.exp(-edge/3.9)*(.20+rockNoise(y*.051,x*.005,621)*.18);
+        r+=(shade[0]*.7-r)*damp;g+=(shade[1]*.76-g)*damp;b+=(shade[2]*.79-b)*damp;
+        const haze=Math.pow(clamp((650-y)/180,0,1),2)*.13;
+        r+=(sky[0]-r)*haze;g+=(sky[1]-g)*haze;b+=(sky[2]-b)*haze;
+        const fleck=rough*(this.paper?6:4);
+        pixels[out]=r+fleck;pixels[out+1]=g+fleck;pixels[out+2]=b+fleck*.75;pixels[out+3]=255;
+        if(y<540||x<left-dx||x>right+dx)continue;
+        const coverage=clamp(Math.min(x-left,right-x)/dx+.5,0,1);
+        if(!coverage)continue;
+        const shoreDistance=Math.min(x-left-barLeft,right-barRight-x);
+        const depth=clamp(shoreDistance/Math.max(6,Math.min(18,(right-left)*.14)),0,1);
+        const exposed=shoreDistance<0;
+        const bedNoise=rockNoise(x*.17,y*.27,331);
+        const reflected=clamp((650-y)/200,0,.34);
+        const deep=mixColor(waterTone,parseColor(this.p[9]),depth*.62);
+        const shallow=mixColor(stone,soil,.32+bedNoise*.19);
+        let wr=shallow[0]+(deep[0]-shallow[0])*smooth01(depth*.95+.08);
+        let wg=shallow[1]+(deep[1]-shallow[1])*smooth01(depth*.95+.08);
+        let wb=shallow[2]+(deep[2]-shallow[2])*smooth01(depth*.95+.08);
+        if(exposed){wr=stone[0]*.65+soil[0]*.35;wg=stone[1]*.65+soil[1]*.35;wb=stone[2]*.65+soil[2]*.35;}
+        const texture=(bedNoise-.5)*(exposed?17:(1-depth)*11);
+        wr+=(sky[0]-wr)*reflected;wg+=(sky[1]-wg)*reflected;wb+=(sky[2]-wb)*reflected;
+        wp[out]=wr+texture;wp[out+1]=wg+texture;wp[out+2]=wb+texture*.8;wp[out+3]=Math.round(coverage*255);
+      }
+    }
+    gc.putImageData(land,0,0);wc.putImageData(wet,0,0);
+    wc.save();wc.setTransform(1/dx,0,0,1/dy,-this.left/dx,-top/dy);
+    for(const bar of this.bars)for(let j=0;j<28;j++){
+      const seed=j*127+bar.y,y=bar.y+(rand(seed)-.5)*bar.length*1.8;
+      const reach=this.barReach(y,bar.side);if(reach<2)continue;
+      const x=riverBankX(y,bar.side)-bar.side*(1+rand(seed+8)*reach*.85);
+      const size=(.5+rand(seed+31)*1.8)*(.5+(y-540)/700);
+      this.paintStone(wc,x,y,size,size*.55,seed,.78);
+    }wc.restore();
+    this.ground={canvas:ground,top,bottom};this.water={canvas:water,top,bottom};this.ready=true;
+  }
+  paintGround(c){
+    if(this.ready){const g=this.ground;c.drawImage(g.canvas,this.left,g.top,this.span,g.bottom-g.top);}
+    else {c.fillStyle=gradient(c,0,510,0,1080,[this.p[6],this.p[7]]);c.fillRect(this.left,440,this.span,700);}
+  }
+  paintWater(c){
+    if(this.ready){const w=this.water;c.drawImage(w.canvas,this.left,w.top,this.span,w.bottom-w.top);}
+    else {c.fillStyle=gradient(c,0,540,0,1050,[this.p[8],this.p[9]]);c.fillRect(this.left,540,this.span,580);}
+  }
+  paintSurfaceDetails(c,left,right){
+    const lo=Math.floor(left/23),hi=Math.ceil(right/23);
+    for(let row=0;row<36;row++)for(let cell=lo;cell<=hi;cell++){
+      const seed=(cell+117)*731+row*131,y=550+row*15+rand(seed+8)*9;
+      const x=cell*23+rand(seed)*20;
+      if(rand(seed+31)>.53)continue;
+      c.save();c.globalAlpha=.08+rand(seed+18)*.11;
+      if(rand(seed+41)>.4){
+        line(c,[[x-3,y+1],[x,y],[x+4+rand(seed+3)*4,y+.5]],this.css.light,.6);
+        if(row>10)line(c,[[x,y],[x-1,y-2.5],[x+2,y]],this.css.shade,.55);
+      }else this.paintStone(c,x,y,.5+rand(seed+5)*1.3,.65,seed,.7);
+      c.restore();
+    }
+  }
+  paintContactShadow(c,x,y,rx,ry,cast=8,strength=.28){
+    const direction=this.era==='bronze'?1:-1;
+    c.save();c.translate(x,y);
+    const draw=(xx,yy,w,h,alpha)=>{
+      c.save();c.translate(xx,yy);c.scale(w,h);
+      const g=c.createRadialGradient(0,0,.03,0,0,1);g.addColorStop(0,`rgba(12,31,31,${alpha})`);g.addColorStop(.5,`rgba(12,31,31,${alpha*.55})`);g.addColorStop(1,'transparent');
+      c.fillStyle=g;c.fillRect(-1,-1,2,2);c.restore();
+    };
+    draw(direction*cast,2.2,rx+cast*.65,ry*1.6,strength*.65);
+    draw(0,.6,rx*.62,ry,strength);
+    c.restore();
+  }
+  paintBanks(c,left,right){
+    // Rooted stones and eroded turf along the shared bank curves. All samples
+    // are world-addressed; changing viewport width cannot reshuffle the shore.
+    for(const side of [-1,1])for(let cell=0;cell<144;cell++){
+      const seed=cell*139+side*811,y=542+cell*4+(rand(seed)-.5)*3;
+      if(rand(seed+71)>.25+rockNoise(y*.036,side,117)*.55)continue;
+      const x=riverBankX(y,side)+side*(2+rand(seed+8)*13);
+      if(x<left-8||x>right+8)continue;
+      const perspective=.25+(y-540)/650,rx=(.9+rand(seed+13)*2.7)*perspective;
+      this.paintStone(c,x,y,rx,rx*.6,seed,.63);
+      if(cell%3===0){
+        c.save();c.globalAlpha=.18;line(c,[[x,y-1],[x+side*(2+rand(seed)*4),y-2]],this.css.light,.65);c.restore();
+      }
+    }
+    for(const rock of this.activeRocks||this.rocks)if(rock.x+rock.w>left&&rock.x-rock.w<right)this.paintOutcrop(c,rock);
+  }
+  paintStone(c,x,y,w,h,seed,alpha=1){
+    c.save();c.globalAlpha*=alpha;
+    poly(c,[[x-w,y],[x-w*.75,y-h*.8],[x+w*.1,y-h],[x+w,y-h*.5],[x+w*.8,y],[x-w*.3,y+h*.13]],this.css.stone);
+    poly(c,[[x-w,y],[x-w*.3,y-h*.36],[x+w,y-h*.5],[x+w*.8,y]],this.css.soil);
+    line(c,[[x-w*.7,y-h*.78],[x+w*.07,y-h*.96],[x+w*.7,y-h*.55]],this.css.light,Math.max(.35,w*.05));c.restore();
+  }
+  paintOutcrop(c,rock){
+    const {x,y,w,h,seed}=rock;
+    this.paintContactShadow(c,x,y,w*.7,3,5,.22);
+    const outline=[[x-w*.58,y],[x-w*.54,y-h*.32],[x-w*.38,y-h*.86],
+      [x-w*.10,y-h*.76],[x+w*.08,y-h],[x+w*.40,y-h*.67],[x+w*.48,y-h*.4],[x+w*.59,y]];
+    c.save();poly(c,outline,this.css.stone);c.clip();
+    poly(c,[[x-w*.38,y-h*.86],[x-w*.10,y-h*.76],[x+w*.08,y-h],[x+w*.40,y-h*.67],[x+w*.1,y-h*.50]],this.css.light);
+    poly(c,[[x+w*.08,y-h],[x+w*.1,y-h*.50],[x+w*.59,y],[x+w*.02,y]],this.css.soil);
+    c.globalAlpha=.46;
+    for(let j=0;j<4;j++){
+      const yy=y-h*(.18+j*.17),xx=x-w*.50+j*3;
+      line(c,[[xx,yy],[xx+w*.18,yy-h*.05],[xx+w*(.3+rand(seed+j)*.15),yy+h*.025]],this.css.shade,.65);
+    }
+    for(let j=0;j<3;j++){
+      const xx=x+(j-1)*w*.22;
+      line(c,[[xx,y-h*.72],[xx+w*.04,y-h*.46],[xx-w*.05,y-h*.19]],this.css.shade,.6);
+    }c.restore();
+    for(let j=0;j<11;j++)this.paintStone(c,x+(rand(seed+j)-.5)*w,y+rand(seed+j+55)*5,1+rand(seed+j+33)*3,1.5,seed+j);
+  }
+  paintQuarry(c,x,y,copper){
+    const profile=[[-68,0],[-58,-31],[-52,-56],[-24,-76],[-13,-89],[15,-78],[44,-52],[54,-25],[68,9]];
+    c.save();c.translate(x,y);poly(c,profile,this.css.stone);
+    c.save();c.clip();
+    const g=gradient(c,-50,-80,60,10,[this.css.light,this.css.stone,this.css.shade]);c.fillStyle=g;c.fillRect(-70,-95,145,110);
+    for(let j=0;j<11;j++){
+      const yy=-80+j*8;
+      c.globalAlpha=.44;
+      line(c,[[-65,yy+7],[-24,yy-1],[4,yy+2],[64,yy+9]],this.css.soil,.8);
+      if(j%2===0)line(c,[[-55,yy+7],[-10,yy+1],[40,yy+7]],this.css.light,.55);
+    }
+    c.globalAlpha=.53;
+    for(let j=0;j<5;j++){
+      const xx=-42+j*21;
+      line(c,[[xx,-79+rand(j)*17],[xx+3,-56],[xx-4,-37],[xx+5,-19+rand(j+44)*12]],this.css.shade,.65);
+    }
+    c.globalAlpha=1;
+    if(copper)for(let j=0;j<8;j++)line(c,[[-31+j*8,-53+j*4],[-25+j*8,-45+j*4],[-30+j*8,-35+j*4]],'#b99c69',1.2);
+    c.restore();
+    // Worked benches and spoil, retaining the quarry's original reserved bounds.
+    for(let j=0;j<4;j++){
+      const yy=-27+j*7,left=-54-j*3,right=8+j*10;
+      poly(c,[[left,yy],[right,yy+5],[right+2,yy+8],[left-2,yy+3]],this.css.soil);
+      line(c,[[left,yy],[right,yy+5]],this.css.light,.9);
+    }
+    for(let j=0;j<20;j++)this.paintStone(c,-58+rand(j+71)*112,rand(j+22)*6,1+rand(j+52)*3.5,1+rand(j)*2,j);
+    c.restore();
+  }
+  pathWidth(row,x){return 3.9+row*1.1+(rockNoise(x*.035,row,71)-.5)*1.8;}
+  paintPaths(c,left,right){
+    c.save();c.beginPath();c.rect(left,460,right-left,700);riverPath(c,false);c.clip('evenodd');
+    const lo=Math.max(left,-760),hi=Math.min(right,800);
+    for(let row=0;row<3;row++){
+      for(const shoulder of [true,false]){
+        const pts=[];
+        for(let x=lo;x<=hi+3;x+=3){const w=this.pathWidth(row,x)+(shoulder?3:0);pts.push([x,roadY(row,x)+4-w*.5]);}
+        for(let x=hi+3;x>=lo;x-=3){const w=this.pathWidth(row,x)+(shoulder?3:0);pts.push([x,roadY(row,x)+4+w*.5]);}
+        c.globalAlpha=shoulder?.20:.68;poly(c,pts,shoulder?this.css.soil:terrainColor(mixColor(this.colors.soil,this.colors.stone,.24)));
+      }
+      c.globalAlpha=.27;
+      for(let cell=Math.floor(lo/7);cell<=Math.ceil(hi/7);cell++){
+        const x=cell*7+rand(cell+row*311)*3,y=roadY(row,x)+4+(rand(cell+71)-.5)*this.pathWidth(row,x)*.7;
+        if(this.era==='classical'||this.era==='medieval'){
+          if(rand(cell+row*71)>.58)this.paintStone(c,x,y,1.1,.55,cell,.6);
+        }else line(c,[[x,y],[x+2+rand(cell)*2,y+.3]],this.css.light,.6);
+      }
+    }
+    c.restore();
+  }
+  paintBridge(c){
+    const {left,right}=this.bridge;
+    const yAt=x=>roadY(1,x)+4;
+    for(const x of [left+12,right-12]){
+      line(c,[[x,yAt(x)-1],[x,yAt(x)+16]],this.css.shade,2.6);
+      line(c,[[x+1,yAt(x)],[x+1,yAt(x)+14]],this.css.soil,.8);
+    }
+    const pts=[];for(let x=left;x<=right+2;x+=2)pts.push([x,yAt(x)-4]);
+    for(let x=right+2;x>=left;x-=2)pts.push([x,yAt(x)+5]);poly(c,pts,this.p[13]);
+    for(let x=left;x<right;x+=4)line(c,[[x,yAt(x)-4],[x,yAt(x)+5]],this.css.stone,.6);
+    for(const side of [-1,1]){
+      const rail=[];for(let x=left;x<=right;x+=4)rail.push([x,yAt(x)+side*4-5]);
+      line(c,rail,this.p[12],1);
+      for(let x=left;x<=right;x+=16)line(c,[[x,yAt(x)+side*4],[x,yAt(x)+side*4-8]],this.p[13],1.4);
+    }
+  }
+  paintPlot(c,x,y,index){
+    poly(c,[[x-30,y],[x+23,y-5],[x+38,y+22],[x-23,y+26]],this.css.soil,this.css.shade,1.2);
+    for(let r=0;r<9;r++){
+      const xx=x-26+r*6.2;
+      line(c,[[xx,y+1],[xx+9,y+23]],this.css.shade,1.15);
+      line(c,[[xx+1.1,y+1],[xx+10,y+23]],this.css.light,.45);
+    }
+    if(this.era==='bronze'){
+      line(c,[[x-32,y],[x-24,y+29],[x+40,y+24]],this.css.shade,4);
+      line(c,[[x-32,y],[x-24,y+29],[x+40,y+24]],this.p[8],1.8);
+    }
+  }
+  paintWaterMotion(c,time){
+    c.save();riverPath(c);c.clip();
+    for(let j=0;j<92;j++){
+      const u=frac(rand(j+17)+time*.009),y=545+u*525;
+      const x=riverX(y)+(rand(j+67)*2-1)*riverWidth(y)*.83;
+      if(this.waterDepth(x,y)<.12)continue;
+      const w=(2+rand(j+92)*9)*(.4+u*.8),sway=Math.sin(time*.55+j)*1.8;
+      c.beginPath();c.moveTo(x-w,y);c.bezierCurveTo(x-w*.3,y-1+sway,x+w*.4,y+1+sway,x+w,y);
+      c.strokeStyle=this.p[14];c.globalAlpha=(.035+rand(j+2)*.09)*Math.sin(u*Math.PI);c.lineWidth=.45+u*.55;c.stroke();
+    }
+    for(let j=0;j<35;j++){
+      const y=555+j*13,x=riverX(y)+Math.sin(y*.041)*riverWidth(y)*.2;
+      if(this.waterDepth(x,y)<.18)continue;
+      const pulse=.5+.5*Math.sin(time*.8+j*4.3),w=2+j*.19+pulse*3;
+      c.globalAlpha=(this.paper?.10:.14)*pulse;
+      line(c,[[x-w,y],[x+w,y+.3]],this.p[14],.7);
+    }
+    c.restore();
+  }
+}
+
 /* -------------------------------------------------------------------------
  * VEGETATION
  * Species-specific, seeded botanical sprites; world-anchored woodland groves;
@@ -328,8 +664,8 @@ class VegetationLayer {
       if(protectedAreas.some(area=>overlaps(box,area)))return false;
       // Check the full projected crown against water and the three roads.
       for(let y=Math.max(540,box.top);y<=Math.min(1080,box.bottom);y+=5){
-        const rx=riverX(y),rw=riverWidth(y)+12;
-        if(box.left<rx+rw&&box.right>rx-rw)return false;
+        const bankLeft=riverBankX(y,-1)-12,bankRight=riverBankX(y,1)+12;
+        if(box.left<bankRight&&box.right>bankLeft)return false;
       }
       const roadLeft=Math.max(-760,box.left),roadRight=Math.min(800,box.right);
       if(roadLeft<=roadRight)for(let row=0;row<3;row++){
@@ -360,7 +696,7 @@ class VegetationLayer {
     // Riparian rushes grow on the dry banks, never in the river channel.
     for(let j=0;j<38;j++){
       const y=583+j*11,side=j%2?1:-1,seed=j*157+901;
-      const x=riverX(y)+side*(riverWidth(y)+23+rand(seed)*12);
+      const x=riverBankX(y,side)+side*(23+rand(seed)*12);
       const plant={x,y,h:13+rand(seed+3)*15,kind:'reed',seed,id:`bank:${j}`};
       if(eligible(plant))this.undergrowth.push(plant);
     }
@@ -377,14 +713,14 @@ class VegetationLayer {
       this.drawPlant(c,{x,y,h:12+rand(seed+9)*24+band*7,kind,seed},0,false,band?.84:.48);
     }
   }
-  paintWoodland(c,left,right){
+  paintWoodland(c,left,right,terrain=null){
     const plants=[...this.trees,...this.undergrowth].sort((a,b)=>a.y-b.y||a.x-b.x);
     for(const plant of plants){
       const radius=this.radius(plant.kind,plant.h);
       if(plant.x+radius<left||plant.x-radius>right)continue;
       if(!['fern','shrub','reed'].includes(plant.kind)){
-        c.save();c.globalAlpha=.14;
-        ellipse(c,plant.x+plant.h*.11,plant.y+1,plant.h*.25,plant.h*.045,this.tones.shadow);c.restore();
+        if(terrain)terrain.paintContactShadow(c,plant.x,plant.y,plant.h*.22,plant.h*.033,plant.h*.12,.25);
+        else {c.save();c.globalAlpha=.14;ellipse(c,plant.x+plant.h*.11,plant.y+1,plant.h*.25,plant.h*.045,this.tones.shadow);c.restore();}
       }
       this.drawPlant(c,plant);
     }
@@ -742,18 +1078,19 @@ class MountainAtmosphere {
 // The worker is assembled from the very same generator and small pure helpers.
 // No fetched scripts, runtime dependencies, server, or duplicated terrain model.
 function mountainWorkerSource() {
-  const helpers=[smooth01,mixColor,parseColor,rockHash,rockNoise,rockFbm,poly,gradient];
+  const helpers=[smooth01,mixColor,parseColor,rockHash,rockNoise,rockFbm,poly,gradient,line,ellipse,roadY,riverX,riverWidth,riverBankX,riverPath,terrainHorizon,terrainColor];
   return [
-    'const document={createElement:()=>new OffscreenCanvas(1,1)};',
+    'const document={createElement:()=>new OffscreenCanvas(1,1)};const TAU=Math.PI*2;',
     `const clamp=${clamp.toString()},frac=${frac.toString()},rand=${rand.toString()};`,
     `const MOUNTAIN_PROFILES=${JSON.stringify(MOUNTAIN_PROFILES)};`,
     `const ROCK_TONES=${JSON.stringify(ROCK_TONES)};`,
+    `const TERRAIN_BIOMES=${JSON.stringify(TERRAIN_BIOMES)};`,
     ...helpers.map(fn=>fn.toString()),
-    MountainAtmosphere.toString(),
+    MountainAtmosphere.toString(),TerrainLayer.toString(),
     `self.onmessage=({data})=>{
       try{
-        const scene=new MountainAtmosphere(data);
-        const surfaces=[...scene.ranges,scene.clouds,scene.mist];
+        const scene=new MountainAtmosphere(data),terrain=new TerrainLayer(data);
+        const surfaces=[...scene.ranges,scene.clouds,scene.mist,terrain.ground,terrain.water];
         const maps=surfaces.map(({canvas,top,bottom})=>({bitmap:canvas.transferToImageBitmap(),top,bottom}));
         self.postMessage({maps},maps.map(map=>map.bitmap));
       }catch(error){self.postMessage({error:String(error)});}
@@ -808,7 +1145,7 @@ export class WorldBackdropRenderer {
   resume(){if(this.destroyed)return;this.paused=false;this._last=null;this._schedule();}
   seek(seconds){this.time=Number.isFinite(Number(seconds))?Math.max(0,Number(seconds)):0;this._last=null;this.draw();}
   replay(){this.seek(0);this.resume();}
-  destroy(){this.destroyed=true;this._cancel();this._stopMountainBake();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];this.mountains=null;this.vegetation=null;}
+  destroy(){this.destroyed=true;this._cancel();this._stopMountainBake();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];this.mountains=null;this.vegetation=null;this.terrain=null;}
   async enableGyroscope(){
     if(this.destroyed||!this.ctx||typeof DeviceOrientationEvent==='undefined')return false;
     try {
@@ -863,6 +1200,7 @@ export class WorldBackdropRenderer {
       const options={era:this.state.era,paper:this.state.paperMode,palette:this.p,
         left:-this.half-pad/this.scale,right:this.half+pad/this.scale,scale:this.scale};
       this.mountains=new MountainAtmosphere({...options,deferBake:true});
+      this.terrain=new TerrainLayer({...options,deferBake:true});
       this._landscapeKey=landscapeKey;
       this._startMountainBake(options,this.mountains);
     }
@@ -872,6 +1210,7 @@ export class WorldBackdropRenderer {
       this._vegetationKey=vegetationKey;
     }
     this.vegetation.rebuild(this.state,this.entities);
+    this.terrain.setOccupancy(this.vegetation.protectedAreas,this.vegetation.trees);
     this.layers=[];
     for(let i=0;i<7;i++) {
       if(i<4&&reuseLandscape&&previous[i]){this.layers.push(previous[i]);continue;}
@@ -894,12 +1233,13 @@ export class WorldBackdropRenderer {
     this._mountainFallback=0;
   }
   _startMountainBake(options,scene){
-    const current=()=>!this.destroyed&&this.mountains===scene;
+    const terrain=this.terrain;
+    const current=()=>!this.destroyed&&this.mountains===scene&&this.terrain===terrain;
     const finish=()=>{
       if(!current())return;
-      // Repaint only the two mountain planes. Terrain, buildings and camera
-      // state keep their existing canvases and addresses throughout the bake.
-      for(const i of [2,3]){
+      // Refresh the landscape from the latest state after the worker commits.
+      // Existing building addresses and the camera remain fixed throughout.
+      for(const i of [2,3,4,5]){
         const layer=this.layers[i];if(!layer)return;
         const {canvas,pad,density}=layer,c=canvas.getContext('2d');
         c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,canvas.width,canvas.height);
@@ -916,7 +1256,7 @@ export class WorldBackdropRenderer {
         // Older browsers still get a bounded, lower-resolution CPU bake after
         // the first paint. Modern browsers never perform this work on the UI.
         scene.rasterScale=Math.min(scene.rasterScale,.48);
-        scene.bake();finish();
+        scene.bake();terrain.rasterScale=Math.min(terrain.rasterScale,.48);terrain.bake();finish();
       };
       this._mountainFallbackIdle=typeof window.requestIdleCallback==='function';
       this._mountainFallback=this._mountainFallbackIdle?window.requestIdleCallback(bake,{timeout:600}):setTimeout(bake,32);
@@ -939,6 +1279,7 @@ export class WorldBackdropRenderer {
           return {canvas,top,bottom};
         });
         scene.ranges=surfaces.slice(0,2);scene.clouds=surfaces[2];scene.mist=surfaces[3];scene.ready=true;
+        terrain.ground=surfaces[4];terrain.water=surfaces[5];terrain.ready=true;
         finish();
       };
       worker.onerror=event=>{
@@ -972,7 +1313,7 @@ export class WorldBackdropRenderer {
     if(i===4){
       const pts=[[left,h],[left,550]];
       for(let x=left;x<=right+30;x+=30)pts.push([x,506+Math.sin(x*.006)*24+Math.sin(x*.013+2)*13]);
-      pts.push([right,h]);poly(c,pts,p[5]);
+      pts.push([right,h]);c.save();poly(c,pts);c.clip();this.terrain.paintGround(c);c.restore();
       this.vegetation.paintDistant(c,left,right);
       this._wonders(c,0);
       if(s.era==='iron')for(const x of [-380,370])this._watchtower(c,x,518);
@@ -980,44 +1321,20 @@ export class WorldBackdropRenderer {
       if(s.era==='classical')this._temple(c,-225,512,1.05);
     }
     if(i===5){
-      // Broad sculpted banks; winding river is a hole in this land plane.
       c.save();c.beginPath();c.moveTo(left,h);
-      for(let x=left;x<=right+12;x+=12)c.lineTo(x,540+Math.sin(x*.006)*14+Math.sin(x*.017)*5);
+      for(let x=left;x<=right+8;x+=8)c.lineTo(x,terrainHorizon(x));
       c.lineTo(right,h);c.closePath();c.clip();
       c.beginPath();c.rect(left,-100,right-left,h+200);riverPath(c,false);c.clip('evenodd');
-      c.fillStyle=gradient(c,0,540,0,1000,[p[6],p[7]]);c.fillRect(left,510,right-left,h);
-      for(let j=0;j<11;j++) {
-        const y=580+j*42;
-        c.beginPath();c.moveTo(left,y+60);c.bezierCurveTo(-480,y-70,-210,y+25,200,y+50);c.lineTo(right,h);c.lineTo(left,h);c.closePath();
-        c.fillStyle=j%2?p[5]:p[6];c.globalAlpha=.11;c.fill();
-        c.globalAlpha=.075;c.beginPath();c.moveTo(left,y+60);c.bezierCurveTo(-480,y-70,-210,y+25,200,y+50);c.strokeStyle=p[14];c.lineWidth=.9;c.stroke();
-      }c.globalAlpha=1;
-      // Pigment flecks are static world-space marks, never frame-random noise.
-      for(let n=0;n<1900;n++) {
-        const x=left+rand(n+91)*(right-left),y=550+rand(n+311)*500;
-        c.globalAlpha=.05+rand(n)*.10;line(c,[[x,y],[x+2+rand(n+8)*8,y-.4]],n%3?p[11]:p[14],.7);
-      }c.globalAlpha=1;
+      this.terrain.paintGround(c);
+      this.terrain.paintSurfaceDetails(c,left,right);
+      this.terrain.paintBanks(c,left,right);
       this._quarry(c,-470,610);
-      this.vegetation.paintWoodland(c,left,right);
+      this.vegetation.paintWoodland(c,left,right,this.terrain);
       this._fields(c,0,false);c.restore();
-      // Thin irregular, reflective banks.
-      for(const side of [-1,1]) {const pts=[];for(let y=540;y<1100;y+=6)pts.push([riverX(y)+side*(riverWidth(y)+2),y]);line(c,pts,p[5],5);line(c,pts,p[12],.7);}
     }
     if(i===6){
-      c.save();c.beginPath();c.rect(left,0,right-left,h);riverPath(c,false);c.clip('evenodd');
-      for(let row=0;row<3;row++){
-        const pts=[];for(let x=Math.max(left,-760);x<=Math.min(right,800);x+=10)pts.push([x,roadY(row,x)+4]);
-        c.globalAlpha=.5;line(c,pts,p[5],11);c.globalAlpha=.4;line(c,pts,p[12],3.5);
-        c.globalAlpha=.25;line(c,pts,p[14],.7);c.globalAlpha=1;
-      }c.restore();
-      // A single timber bridge connects the middle terrace to the east bank.
-      const by=734,bx=riverX(by),bw=riverWidth(by)+13;
-      poly(c,[[bx-bw,by-3],[bx+bw,by-3],[bx+bw,by+7],[bx-bw,by+7]],p[13]);
-      for(let x=bx-bw;x<bx+bw;x+=5)line(c,[[x,by-3],[x,by+7]],p[12],.7);
-      for(const yy of [by-3,by+7]){
-        line(c,[[bx-bw,yy-5],[bx+bw,yy-5]],p[12],1);
-        for(let x=bx-bw;x<=bx+bw;x+=18)line(c,[[x,yy],[x,yy-7]],p[13],1.5);
-      }
+      this.terrain.paintPaths(c,left,right);
+      this.terrain.paintBridge(c);
       for(const e of this.entities)if(this._visible(e.x,e.y,65))this._building(c,e,0,false);
       if(!this.entities.length){this._building(c,{type:'hide_tent',x:-60,y:650,seed:1},0,false);this._building(c,{type:'forager_hut',x:8,y:720,seed:2},0,false);}
       // Central gathering circle is separate from building slots and roads.
@@ -1075,18 +1392,8 @@ export class WorldBackdropRenderer {
   }
   _water(c,t){
     const p=this.p,s=this.state;
-    c.save();riverPath(c);c.clip();
-    c.fillStyle=gradient(c,0,440,0,1000,[p[2],p[8],p[9]]);c.fillRect(-this.half-70,430,this.half*2+140,700);
-    c.save();c.globalAlpha=.19;
-    for(let n=0;n<150;n++){
-      const y=445+rand(n+7)*640,x=riverX(y)+(rand(n+17)*2-1)*riverWidth(y),w=1+(y-440)*.045*rand(n+8);
-      const drift=Math.sin(t*.45+n)*4;line(c,[[x-w+drift,y],[x+w+drift,y]],n%3?p[14]:p[2],.6+(y-440)*.001);
-    }c.restore();
-    c.save();c.globalAlpha=.17;
-    for(let j=0;j<70;j++){
-      const y=465+j*7,x=riverX(y)+Math.sin(j*3+t*.6)*9,w=4+j*.22+Math.sin(t+j)*3;
-      line(c,[[x-w,y],[x+w,y]],p[14],1.1);
-    }c.restore();c.restore();
+    c.save();riverPath(c);c.clip();this.terrain.paintWater(c);c.restore();
+    this.terrain.paintWaterMotion(c,t);
     if(s.techs.includes('caravan_trade')||s.era==='classical'){
       for(let n=0;n<2;n++){
         const progress=frac(t*.008+n*.53),y=580+progress*380,x=riverX(y),k=.5+progress*.5;
@@ -1100,19 +1407,14 @@ export class WorldBackdropRenderer {
     }
   }
   _quarry(c,x,y){
-    const p=this.p;poly(c,[[x-68,y],[x-52,y-68],[x-17,y-90],[x+45,y-52],[x+68,y+9]],p[4]);
-    poly(c,[[x-17,y-90],[x+4,y-18],[x+68,y+9],[x+45,y-52]],p[3]);
-    for(let j=0;j<6;j++)line(c,[[x-48+j*9,y-j*8],[x+16+j*7,y+8-j*8]],p[5],2);
-    if(this.state.era==='bronze'||this.state.techs.includes('copper_mining'))for(let j=0;j<8;j++)line(c,[[x-25+j*8,y-49+j*5],[x-20+j*8,y-42+j*5],[x-29+j*8,y-33+j*5]],'#bd9967',1.6);
+    this.terrain.paintQuarry(c,x,y,this.state.era==='bronze'||this.state.techs.includes('copper_mining'));
   }
   _fields(c,t,moving){
     const p=this.p,s=this.state,n=Math.min(7,1+Math.ceil(s.jobs.farmer/3));
     if(!moving){
       for(let f=0;f<n;f++){
         const x=-310-f%3*70,y=728+Math.floor(f/3)*49;
-        poly(c,[[x-30,y],[x+23,y-5],[x+38,y+22],[x-23,y+26]],f%2?p[5]:'#938758',p[7],1.5);
-        for(let r=0;r<6;r++)line(c,[[x-27+r*9,y+2],[x-18+r*9,y+23]],p[7],1);
-        if(s.era==='bronze')line(c,[[x-32,y],[x-24,y+29],[x+40,y+24]],p[8],2.5);
+        this.terrain.paintPlot(c,x,y,f);
       }return;
     }
     for(let f=0;f<n;f++){
@@ -1133,7 +1435,7 @@ export class WorldBackdropRenderer {
       return;
     }
     c.save();c.translate(x,y);
-    ellipse(c,3,2,22,4,'#10292935');
+    this.terrain.paintContactShadow(c,0,0,21,3.3,8,.30);
     const light=s.paperMode?p[5]:'#f4c783';
     const wall=(xx,yy,w,h)=>{
       c.fillStyle=p[12];c.fillRect(xx,yy,w,h);poly(c,[[xx+w,yy],[xx+w+5,yy-3],[xx+w+5,yy+h-3],[xx+w,yy+h]],p[5]);
@@ -1342,7 +1644,7 @@ export class WorldBackdropRenderer {
     const p=this.p,s=this.state,left=-this.half-70,right=this.half+70;
     const pts=[[left,1100],[left,956]];
     for(let x=left;x<=right+20;x+=20)pts.push([x,962+Math.sin(x*.008)*16+Math.sin(x*.021)*6]);
-    pts.push([right,1100]);poly(c,pts,p[7]);
+    pts.push([right,1100]);c.save();poly(c,pts);c.clip();this.terrain.paintGround(c);c.globalAlpha=.26;c.fillStyle=p[7];c.fillRect(left,930,right-left,200);c.restore();
     this.vegetation.paintForeground(c,this.half,t);
     if(!s.paperMode)for(let n=0;n<33;n++){
       const x=Math.sin(t*.08+n*7)*this.half,y=760+rand(n+90)*220+Math.sin(t*.3+n)*8;
