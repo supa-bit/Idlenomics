@@ -841,7 +841,7 @@ class MountainAtmosphere {
     this.paper = paper;
     this.palette = p;
     this.left = left - 45;
-    this.right = right + 45;
+    this.right = Math.max(right + 45, 420); // Retain the snow-fed source even when portrait crops it.
     this.span = this.right - this.left;
     // World-space density is bounded separately from the native-DPR canvas.
     // The large forms, channels and grain stay fixed when this resolution changes.
@@ -997,9 +997,10 @@ class MountainAtmosphere {
         const foot=smooth01((projectedY-360)/220);
         const fog=(range?.055:.33)+foot*(range?.41:.31);
         red+=(haze[0]-red)*fog;green+=(haze[1]-green)*fog;blue+=(haze[2]-blue)*fog;
-        if(this.era==='iron') {
-          const snowLine=222+(rockFbm(x*.018,z*.024,461,3)-.5)*43;
-          const snow=smooth01((elevation-snowLine)/33)*smooth01((normal-.32)*2.4)*.91;
+        if(this.era==='iron'||Math.abs(x-349)<110) {
+          const snowLine=(this.era==='iron'?222:235)+(rockFbm(x*.018,z*.024,461,3)-.5)*43;
+          const snow=smooth01((elevation-snowLine)/33)*smooth01((normal-.32)*2.4)*.91
+            *(this.era==='iron'?1:smooth01((110-Math.abs(x-349))/45));
           red+=((this.paper?230:197)-red)*snow;
           green+=((this.paper?231:211)-green)*snow;
           blue+=((this.paper?218:219)-blue)*snow;
@@ -1588,7 +1589,7 @@ export class WorldBackdropRenderer {
   resume(){if(this.destroyed)return;this.paused=false;this._last=null;this._schedule();}
   seek(seconds){this.time=Number.isFinite(Number(seconds))?Math.max(0,Number(seconds)):0;this._last=null;this.draw();}
   replay(){this.seek(0);this.resume();}
-  destroy(){this.destroyed=true;this._cancel();this._stopMountainBake();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];this.mountains=null;this.vegetation=null;this.terrain=null;this.architecture=null;this._walkingRoutes?.clear();}
+  destroy(){this.destroyed=true;this._cancel();this._stopMountainBake();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];this.mountains=null;this._headwaterMountain=null;this.vegetation=null;this.terrain=null;this.architecture=null;this._walkingRoutes?.clear();}
   async enableGyroscope(){
     if(this.destroyed||!this.ctx||typeof DeviceOrientationEvent==='undefined')return false;
     try {
@@ -1805,7 +1806,7 @@ export class WorldBackdropRenderer {
       const l=this.layers[i],depth=this._planeDepth(i);
       c.drawImage(l.canvas,-l.pad+this.pointer.x*depth*15,-l.pad+this.pointer.y*depth*9,this.width+l.pad*2,this.height+l.pad*2);
       if(i===1)this._plane(1,cc=>this._skyMotion(cc,t));
-      if(i===3)this._plane(3,cc=>this.mountains.paintMist(cc,t));
+      if(i===3){this._plane(3,cc=>this.mountains.paintMist(cc,t));this._plane(4,cc=>this._mountainRiver(cc));}
       if(i===4)this._plane(4,cc=>this._wonderMotion(cc,t));
       if(i===4)this._plane(5,cc=>this._water(cc,t));
       if(i===5)this._plane(5,cc=>this._fields(cc,t,true));
@@ -1836,6 +1837,48 @@ export class WorldBackdropRenderer {
       line(c,[[x-4,y+flap],[x,y],[x+4,y+flap]],p[4],.8);
     }
 
+  }
+  _mountainRiver(c){
+    const mountain=this.mountains;
+    // Locate the snowfield on the actual rendered front ridge, so the source
+    // follows the era's relief instead of hanging above or below the summit.
+    if(this._headwaterMountain!==mountain||this._headwaterReady!==mountain.ready){
+      let y=mountain.skyline(349,1);
+      if(mountain.ready){
+        const range=mountain.ranges[1],canvas=range.canvas;
+        const column=clamp(Math.floor((349-mountain.left)/mountain.span*canvas.width),0,canvas.width-1);
+        const pixels=canvas.getContext('2d').getImageData(column,0,1,canvas.height).data;
+        for(let row=0;row<canvas.height;row++)if(pixels[row*4+3]>200){y=range.top+row/canvas.height*(range.bottom-range.top);break;}
+      }
+      this._headwaterSource={x:349,y:y+18};this._headwaterMountain=mountain;this._headwaterReady=mountain.ready;
+    }
+    const source=this._headwaterSource,head=(riverSourceY(-1)+riverSourceY(1))*.5;
+    const endX=riverX(head),span=head-source.y;
+    // A descending ravine with short cascades, widening into the valley river.
+    const steps=72;
+    const samples=[];
+    for(let k=0;k<steps;k++){
+      const t=k/steps,y=source.y+span*t;
+      const upper=1-smooth01(t);
+      const shiftX=(.25-.55)*this.pointer.x*15/this.scale*upper;
+      const shiftY=(.25-.55)*this.pointer.y*9/this.scale*upper;
+      const x=source.x+(endX-source.x)*smooth01(t)+Math.sin(t*Math.PI*7)*3.5*Math.sin(t*Math.PI);
+      samples.push({x:x+shiftX,y:y+shiftY,w:1.1+Math.pow(t,1.65)*(riverWidth(head)-1.1),t});
+    }
+    samples.push({x:endX,y:head+6,w:riverWidth(head),t:1});
+    const ribbon=extra=>[...samples.map(p=>[p.x-p.w-extra,p.y]),...samples.slice().reverse().map(p=>[p.x+p.w+extra,p.y])];
+    c.save();c.globalAlpha=.35;poly(c,ribbon(1.7),this.p[7]);c.globalAlpha=1;
+    const water=c.createLinearGradient(0,source.y,0,head);
+    water.addColorStop(0,this.state.paperMode?'#b6d4d2':'#91b8c7');
+    water.addColorStop(.45,this.state.paperMode?'#7fa9ad':'#628d9f');
+    water.addColorStop(1,terrainColor(mixColor(mixColor(this.terrain.colors.water,parseColor(this.p[9]),.62),parseColor(this.p[2]),.34)));poly(c,ribbon(0),water);
+    for(let k=1;k<samples.length-1;k++){
+      const p=samples[k],q=samples[k-1];
+      if(p.t>.67||k%12>7)continue;
+      line(c,[[q.x,q.y],[p.x,p.y]],this.state.paperMode?'#e1eded':'#b8d4dc',p.t<.3?.7:1.1);
+      if(k%9===0)line(c,[[p.x-p.w*.65,p.y],[p.x+p.w*.65,p.y+.7]],'#dce8e4',.65);
+    }
+    c.restore();
   }
   _water(c,t){
     const p=this.p,s=this.state;
