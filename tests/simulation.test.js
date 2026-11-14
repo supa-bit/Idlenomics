@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {simulateSeconds,advanceTo,getNetRates,getResourceCaps,MAX_OFFLINE_SECONDS} from '../simulation.js';
+import {simulateSeconds,advanceTo,getNetRates,getResourceCaps,getEconomyDiagnostics,MAX_OFFLINE_SECONDS} from '../simulation.js';
 import {RESOURCES,BUILDINGS,JOBS,WONDERS,MILITARY_UNITS,CRAFT_RECIPES,TECHS,ERAS} from '../data.js';
 const zeros=items=>Object.fromEntries(items.map(x=>[x.id,0]));
 function fixture(){return {era:'medieval',pop:12,landBonus:0,playtimeSeconds:0,lastTick:1000,resources:Object.fromEntries(RESOURCES.map(r=>[r.id,Math.min(80,r.baseCap)])),buildings:{...zeros(BUILDINGS),hide_tent:10},jobs:{...zeros(JOBS),farmer:7,artisan:1,woodcutter:1,quarrier:1,hunter:1,miner:1},wonders:zeros(WONDERS),units:zeros(MILITARY_UNITS),techs:TECHS.map(t=>t.id),autoCraft:Object.fromEntries(CRAFT_RECIPES.map(r=>[r.id,true])),activeEvent:null};}
@@ -58,3 +58,38 @@ test('fractional craft boosts preserve completed work across arbitrary chunks',(
  const s=fixture();s.buildings.smeltery=1;s.jobs.artisan=3;s.resources.tools=0;
  const a=clone(s),b=clone(s);simulateSeconds(a,197);for(const n of [1,2,17,50,127])simulateSeconds(b,n);assert.deepEqual(a,b);
 });
+test('diagnostics separate building/worker production, citizen upkeep, crafting demand, and blocked recipe reasons',()=>{
+ const s=fixture();s.buildings.forager_hut=2;s.buildings.lumber_pile=1;s.jobs={...zeros(JOBS),farmer:3,woodcutter:1,artisan:1};
+ s.autoCraft={craft_tools:true,craft_bronze:true};s.resources.tools=80;s.resources.ore=4;
+ const diag=getEconomyDiagnostics(s);
+ assert(Math.abs(diag.resources.food.buildingTotal-1.6)<1e-9);
+ assert(Math.abs(diag.resources.food.workerTotal-4.8)<1e-9);
+ assert(Math.abs(diag.resources.food.citizenConsumption-6.0)<1e-9);
+ assert(Math.abs(diag.resources.food.passiveNet-0.4)<1e-9);
+ assert.equal(diag.recipes.craft_tools.status,'blocked_output_full');
+ assert.equal(diag.recipes.craft_bronze.status,'blocked_missing_inputs');
+ s.resources.tools=10;
+ const diag2=getEconomyDiagnostics(s);
+ assert(Math.abs(diag2.resources.tools.potentialCraftOutput-0.5)<1e-9);
+ assert(Math.abs(diag2.resources.wood.potentialCraftDemand-6.25)<1e-9);
+ assert.equal(diag2.recipes.craft_tools.status,'input_bottleneck');
+});
+test('return summary reports actual gains, spending, overflow, completed batches, and population changes',()=>{
+ const s=fixture();s.pop=3;s.buildings.hide_tent=2;s.jobs={...zeros(JOBS),farmer:3,woodcutter:2,artisan:1};
+ s.autoCraft={craft_tools:true};s.resources.food=240;s.resources.wood=100;s.resources.stone=100;s.resources.hide=60;s.resources.tools=0;
+ const {summary}=advanceTo(s,1000+60*1000);
+ assert.equal(summary.seconds,60);
+ assert.equal(summary.popBefore,3);
+ assert.equal(summary.popAfter,5);
+ assert.equal(summary.popGained,2);
+ assert.equal(summary.batches.craft_tools,10);
+ assert.equal(summary.recipes.find(r=>r.id==='craft_tools').blockedByInput,5);
+ assert.equal(summary.resources.tools.craftedOut,20);
+ assert.equal(summary.resources.wood.spentInCraft,100);
+ assert.equal(summary.resources.stone.spentInCraft,100);
+ assert(summary.resources.food.overflow>0);
+ for(const r of Object.values(summary.resources)){
+  assert(Math.abs((r.gained-r.used)-r.net)<1e-7,`${r.id}: gained-used != net`);
+ }
+});
+
