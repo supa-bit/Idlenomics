@@ -13,6 +13,8 @@
     h1 { font: 400 clamp(22px,3vw,36px)/1.2 Georgia,serif; margin: 5px 0 0; }
     .eyebrow { color:#b8baaa; font-size:11px; text-transform:uppercase; letter-spacing:.18em; }
     .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .view-group { flex-wrap:wrap; max-width:100%; }
+    .controls { max-width:100%; }
     .group { display:flex; gap:3px; padding:4px; background:#1d2a30; border:1px solid #3b494b; border-radius:7px; }
     button,select { border:0; color:#d3d7cb; background:transparent; font:inherit; padding:7px 10px; border-radius:4px; cursor:pointer; }
     select { color:#eee9dc; }
@@ -32,15 +34,15 @@
 </head>
 <body>
   <header>
-    <div><span class="eyebrow" id="eyebrow">Idlenomics · Environment study 03</span><h1 id="study-title">Terrain & riverbanks</h1></div>
+    <div><span class="eyebrow" id="eyebrow">Idlenomics · Environment study 04</span><h1 id="study-title">Architecture & settlement</h1></div>
     <div class="controls" aria-label="Preview controls">
       <div class="group"><select id="era" aria-label="Era"><option value="stone">Stone Age</option><option value="bronze" selected>Bronze Age</option><option value="iron">Iron Age</option><option value="classical">Classical Age</option><option value="medieval">Medieval Age</option></select></div>
       <div class="group" aria-label="Lighting"><button id="night" aria-pressed="false">Dusk</button><button id="day" aria-pressed="true">Daylight</button></div>
-      <div class="group" aria-label="View"><button id="mountains" aria-pressed="false">Mountains</button><button id="vegetation" aria-pressed="false">Vegetation</button><button id="terrain" aria-pressed="true">Terrain</button><button id="scene" aria-pressed="false">Full scene</button></div>
+      <div class="group view-group" aria-label="View"><button id="mountains" aria-pressed="false">Mountains</button><button id="vegetation" aria-pressed="false">Vegetation</button><button id="terrain" aria-pressed="false">Terrain</button><button id="architecture" aria-pressed="true">Buildings</button><button id="scene" aria-pressed="false">Full scene</button></div>
       <div class="group"><button id="motion" aria-pressed="false">Play motion</button></div>
     </div>
   </header>
-  <main><figure><canvas id="study-output" role="img" aria-label="Isolated terrain and riverbank preview"></canvas><figcaption id="caption">Sculpted terraces · worn paths · gravel bars · shallows</figcaption></figure></main>
+  <main><figure><canvas id="study-output" role="img" aria-label="Isolated building study"></canvas><figcaption id="caption">Natural ground · recessed quarry · riverbed · shallows</figcaption></figure></main>
   <footer><p>Inspect each component separately, then switch to the full scene to judge forest clusters, clearings, scale, and contrast around the settlement.</p><p>Space: pause or play · <a href="./">Return to the game</a></p></footer>
   <canvas id="world-bg-canvas" aria-hidden="true"></canvas>
   <script type="module">
@@ -53,17 +55,17 @@
     const params = new URLSearchParams(location.search);
     let era = ['stone','bronze','iron','classical','medieval'].includes(params.get('era')) ? params.get('era') : 'bronze';
     let paper = params.get('mode') !== 'dusk';
-    let view = ['mountains','vegetation','terrain','scene'].includes(params.get('view')) ? params.get('view') : 'terrain';
+    let view = ['mountains','vegetation','terrain','architecture','scene'].includes(params.get('view')) ? params.get('view') : 'architecture';
     let playing = false, time = 12, last = null, raf = 0;
     const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-    const controls = Object.fromEntries(['era','day','night','mountains','vegetation','terrain','scene','motion','caption','study-title','eyebrow'].map(id => [id,document.getElementById(id)]));
+    const controls = Object.fromEntries(['era','day','night','mountains','vegetation','terrain','architecture','scene','motion','caption','study-title','eyebrow'].map(id => [id,document.getElementById(id)]));
     function synchronize() {
       controls.era.value = era;
-      for(const [id,active] of [['day',paper],['night',!paper],['mountains',view==='mountains'],['vegetation',view==='vegetation'],['terrain',view==='terrain'],['scene',view==='scene'],['motion',playing]]) controls[id].setAttribute('aria-pressed',String(active));
+      for(const [id,active] of [['day',paper],['night',!paper],['mountains',view==='mountains'],['vegetation',view==='vegetation'],['terrain',view==='terrain'],['architecture',view==='architecture'],['scene',view==='scene'],['motion',playing]]) controls[id].setAttribute('aria-pressed',String(active));
       controls.motion.textContent = playing ? 'Pause motion' : 'Play motion';
-      controls['study-title'].textContent = view==='terrain' ? 'Terrain & riverbanks' : view==='vegetation' ? 'Vegetation & woodland' : view==='mountains' ? 'Mountains & atmosphere' : 'The living valley';
-      controls.eyebrow.textContent = `Idlenomics · ${view==='terrain'?'Environment study 03':view==='vegetation'?'Environment study 02':view==='mountains'?'Environment study 01':'Integration view'}`;
-      output.setAttribute('aria-label',`${era} age ${paper?'daylight':'dusk'} ${view==='scene'?'settlement scene':view==='vegetation'?'vegetation study':view==='terrain'?'terrain and riverbank study':'mountain and atmosphere study'}`);
+      controls['study-title'].textContent = view==='architecture' ? 'Architecture & settlement' : view==='terrain' ? 'Terrain & riverbanks' : view==='vegetation' ? 'Vegetation & woodland' : view==='mountains' ? 'Mountains & atmosphere' : 'The living valley';
+      controls.eyebrow.textContent = `Idlenomics · ${view==='architecture'?'Environment study 04':view==='terrain'?'Environment study 03':view==='vegetation'?'Environment study 02':view==='mountains'?'Environment study 01':'Integration view'}`;
+      output.setAttribute('aria-label',`${era} age ${paper?'daylight':'dusk'} ${view==='scene'?'settlement scene':view==='vegetation'?'vegetation study':view==='terrain'?'terrain and riverbank study':view==='architecture'?'building study':'mountain and atmosphere study'}`);
       const query = new URLSearchParams({era,mode:paper?'day':'dusk',view});
       history.replaceState(null,'',`?${query}`);
     }
@@ -75,16 +77,18 @@
       synchronize(); paint();
     }
     function paint() {
-      const waiting=view!=='vegetation'&&(!renderer.mountains.ready||!renderer.terrain.ready);
+      const waiting=!['vegetation','architecture'].includes(view)&&(!renderer.mountains.ready||!renderer.terrain.ready);
       output.setAttribute('aria-busy',String(waiting));
       controls.caption.textContent = waiting ? 'Preparing this landscape…'
-        : view==='terrain' ? 'Sculpted terraces · worn paths · gravel bars · shallows'
+        : view==='architecture' ? 'Village architecture · homes, workshops and civic buildings'
+        : view==='terrain' ? 'Natural ground · recessed quarry · riverbed · shallows'
         : view==='vegetation' ? 'Branch structure · leaf texture · species variations · wind'
-        : view==='scene' ? 'Integration view · woodland groves, cultivated clearings, riverbanks and foreground foliage'
+        : view==='scene' ? 'Integration view · a river village with open clearings and woodland'
         : 'Composed ridgelines · branching gullies · directional rock lighting · distant haze';
       renderer.time = time;
       renderer.reducedMotion = reduced.matches && !playing;
       if(view==='scene')renderer.draw();
+      else if(view==='architecture')paintArchitecture(renderer.reducedMotion?0:time);
       else if(view==='terrain')paintTerrain(renderer.reducedMotion?0:time);
       else if(view==='vegetation')paintVegetation(renderer.reducedMotion?0:time);
       else {
@@ -98,12 +102,33 @@
         renderer._plane(3,cc=>renderer.mountains.paintMist(cc,renderer.reducedMotion?0:time));
       }
       const cropTop=view==='terrain'?Math.min(540,renderer.worldHeight*.60):0;
-      const worldCrop=view==='scene'?renderer.worldHeight:view==='vegetation'?galleryHeight:view==='terrain'?renderer.worldHeight-cropTop:565;
+      const worldCrop=view==='scene'?renderer.worldHeight:view==='vegetation'?galleryHeight:view==='architecture'?architectureHeight:view==='terrain'?renderer.worldHeight-cropTop:565;
       const sourceY=Math.round(source.height*cropTop/renderer.worldHeight);
       const height=Math.max(1,Math.min(source.height-sourceY,Math.round(source.height*worldCrop/renderer.worldHeight)));
       if(output.width!==source.width)output.width=source.width;
       if(output.height!==height)output.height=height;
       ctx.drawImage(source,0,sourceY,source.width,height,0,0,output.width,output.height);
+    }
+    let architectureHeight=700;
+    function paintArchitecture(t) {
+      const c=renderer.ctx,half=renderer.half,columns=renderer.width<650?2:renderer.width<1100?3:5;
+      const types=['hide_tent','forager_hut','lumber_pile','granary','mud_brick_hut','copper_mine','smeltery','library','aqueduct','guild_hall'];
+      const labels=['Hide shelter','Forager camp','Timber yard','Raised granary','Mudbrick house','Mine shaft','Smeltery','Scriptorium','Aqueduct','Guild hall'];
+      const rows=Math.ceil(types.length/columns),cell=half*2/columns;
+      const rowHeight=Math.min(205,(renderer.worldHeight-60)/rows),scale=Math.min(2.2,(cell-24)/96,(rowHeight-40)/112);
+      architectureHeight=Math.min(renderer.worldHeight,48+rows*rowHeight);
+      c.setTransform(renderer.dpr*renderer.scale,0,0,renderer.dpr*renderer.scale,renderer.dpr*renderer.width/2,0);
+      const sky=c.createLinearGradient(0,0,0,architectureHeight);
+      sky.addColorStop(0,paper?'#c9cebb':'#35474b');sky.addColorStop(1,paper?'#a6b498':'#253a3b');
+      c.globalAlpha=1;c.fillStyle=sky;c.fillRect(-half,0,half*2,renderer.worldHeight);
+      c.font='14px system-ui,sans-serif';c.textAlign='center';
+      types.forEach((type,i)=>{
+        const x=-half+cell*(i%columns+.5),y=25+rowHeight*(Math.floor(i/columns)+1)-18;
+        const entity={type,index:0,x,y,scale,seed:i*251+17};
+        renderer.terrain.paintContactShadow(c,x,y,25*scale,3.6*scale,8*scale,.23);
+        renderer.architecture.paint(c,entity);renderer.architecture.paintMotion(c,entity,t);
+        c.fillStyle=paper?'#405343':'#c4cdc1';c.fillText(labels[i],x,y+27);
+      });
     }
     function paintTerrain(t) {
       const c=renderer.ctx,terrain=renderer.terrain,left=-renderer.half-60,right=renderer.half+60;
@@ -117,7 +142,7 @@
       terrain.traceRiver(c,false);c.clip('evenodd');
       terrain.paintGround(c);terrain.paintSurfaceDetails(c,left,right);terrain.paintBanks(c,left,right);
       renderer._quarry(c,-470,610);renderer._fields(c,t,false);c.restore();
-      terrain.paintPaths(c,left,right);terrain.paintBridge(c);
+      terrain.paintBridge(c);
     }
     let galleryHeight=720;
     function paintVegetation(t) {
@@ -164,6 +189,7 @@
     controls.mountains.addEventListener('click',()=>{view='mountains';update();});
     controls.vegetation.addEventListener('click',()=>{view='vegetation';update();});
     controls.terrain.addEventListener('click',()=>{view='terrain';update();});
+    controls.architecture.addEventListener('click',()=>{view='architecture';update();});
     controls.scene.addEventListener('click',()=>{view='scene';update();});
     controls.motion.addEventListener('click',toggle);
     document.addEventListener('keydown',e=>{if(e.code==='Space'&&!['BUTTON','SELECT','INPUT'].includes(document.activeElement.tagName)){e.preventDefault();toggle();}});
