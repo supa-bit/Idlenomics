@@ -4,8 +4,8 @@
  *
  * Coordinates: world units, +x right / +y down; 1000 units high. The camera
  * always uses ONE scale for both axes. Portrait crops the valley flanks; wide
- * screens reveal them. Sky and mountains have depth parallax; the inhabited
- * valley moves as one.
+ * screens reveal them. Sky and rear mountains have depth parallax; the front
+ * watershed and inhabited valley move as one.
  * Buildings use seeded, collision-free plots in irregular village clearings;
  * type/index addresses survive growth. Off-camera architecture is culled.
  *
@@ -929,7 +929,7 @@ class MountainAtmosphere {
     const top=130, bottom=660, base=560;
     const width=Math.min(2300,Math.ceil(this.span*this.rasterScale));
     const height=Math.ceil((bottom-top)*this.rasterScale);
-    const depthCount=330, back=-190, front=410;
+    const depthCount=range?560:330, back=-190, front=410;
     const dx=this.span/width, dy=(bottom-top)/height, dz=(front-back)/(depthCount-1);
     const heights=new Float32Array(width*depthCount);
     const gullies=this._gullyMask(width,depthCount,back,dx,dz,range);
@@ -958,6 +958,47 @@ class MountainAtmosphere {
         const crag=(rockFbm(x*.047,z*.037,seed+233,3)-.5)*8*Math.exp(-z*z/7000);
         const strata=this.era==='bronze'?Math.sin(broad*.23+rockNoise(x*.008,z*.009,seed+44)*2.6)*.9:0;
         heights[iz*width+ix]=Math.max(0,broad+carving+crag+strata+grain-cut*9*smooth01((z+12)/70));
+      }
+    }
+    // The headwaters are part of the heightfield: lowering the channel changes
+    // normals, shadows, banks and occlusion, rather than painting over the rock.
+    const drainage=[];
+    if(range===1){
+      const mouth=riverX((riverSourceY(-1)+riverSourceY(1))*.5);
+      let previousBed=Infinity;
+      for(let iz=0;iz<depthCount;iz++){
+        const z=back+iz*dz,t=clamp(z/220,0,1);
+        const x=349+(mouth-349)*smooth01(t)+(Math.sin(t*14)*13+Math.sin(t*31)*3)*Math.sin(t*Math.PI);
+        const ix=clamp(Math.round((x-this.left)/dx-.5),0,width-1);
+        const original=heights[iz*width+ix];
+        const active=z>=18;
+        const bed=active?Math.min(original-5,previousBed-dz*.18):original;
+        if(active)previousBed=bed;
+        const w=(1.2+10.8*Math.pow(t,1.4))*(.86+rockNoise(z*.025,2,582)*.28);
+        drainage.push({x,w,bed,active});
+        if(!active)continue;
+        for(let col=Math.max(0,Math.floor(ix-w*3.6/dx));col<=Math.min(width-1,Math.ceil(ix+w*3.6/dx));col++){
+          const xx=this.left+(col+.5)*dx,d=Math.abs(xx-x);
+          const valley=Math.exp(-Math.pow(d/(w*2.7),2));
+          const k=iz*width+col;
+          const cut=valley*(4+7*smooth01(t))*(.8+rockNoise(xx*.08,z*.06,714)*.4);
+          heights[k]=Math.min(heights[k]-cut,heights[k]+(bed-heights[k])*Math.exp(-Math.pow(d/(w*.85),4)));
+        }
+      }
+    }
+    if(range===1){
+      for(let iz=0;iz<depthCount;iz++){
+        const z=back+iz*dz;if(z<18||z>100)continue;
+        const t=clamp((z-18)/82,0,1),join=drainage[iz].x;
+        const branches=[{x:join+(1-smooth01(t))*45,w:1.0+t*.8},{x:join-(1-smooth01(t))*31,w:.8+t*.65}];
+        drainage[iz].branches=branches;
+        for(const branch of branches){
+          const ix=Math.round((branch.x-this.left)/dx-.5);
+          for(let col=Math.max(0,ix-5);col<=Math.min(width-1,ix+5);col++){
+            const xx=this.left+(col+.5)*dx,d=Math.abs(xx-branch.x);
+            heights[iz*width+col]-=Math.exp(-Math.pow(d/(branch.w*2.4),2))*3.8*Math.sin(t*Math.PI);
+          }
+        }
       }
     }
     const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
@@ -997,13 +1038,39 @@ class MountainAtmosphere {
         const foot=smooth01((projectedY-360)/220);
         const fog=(range?.055:.33)+foot*(range?.41:.31);
         red+=(haze[0]-red)*fog;green+=(haze[1]-green)*fog;blue+=(haze[2]-blue)*fog;
-        if(this.era==='iron'||Math.abs(x-349)<110) {
-          const snowLine=(this.era==='iron'?222:235)+(rockFbm(x*.018,z*.024,461,3)-.5)*43;
-          const snow=smooth01((elevation-snowLine)/33)*smooth01((normal-.32)*2.4)*.91
-            *(this.era==='iron'?1:smooth01((110-Math.abs(x-349))/45));
+        {
+          const snowLine=(this.era==='iron'?222:242)+(rockFbm(x*.018,z*.024,461,3)-.5)*43;
+          const snow=smooth01((elevation-snowLine)/33)*smooth01((normal-.32)*2.4)*.91;
           red+=((this.paper?230:197)-red)*snow;
           green+=((this.paper?231:211)-green)*snow;
           blue+=((this.paper?218:219)-blue)*snow;
+        }
+        if(range===1&&drainage[iz]?.active){
+          const channel=drainage[iz],d=Math.abs(x-channel.x);
+          const irregular=rockNoise(x*.35,z*.26,628);
+          const wet=1-smooth01((d-channel.w*(.32+irregular*.22))/Math.max(1,channel.w*.20));
+          const bank=(1-smooth01((d-channel.w*.9)/Math.max(2,channel.w*.7)))*(1-wet);
+          red*=1-bank*.15;green*=1-bank*.13;blue*=1-bank*.08;
+          if(wet>0){
+            const t=clamp(z/220,0,1);
+            const tone=TERRAIN_BIOMES[this.era].water;
+            const target=mixColor(mixColor(tone,parseColor(this.palette[9]),.62),sky,.34);
+            const slope=iz>0?(drainage[iz-1].bed-channel.bed)/dz:0;
+            const cascade=smooth01((slope-.6)*.8)*smooth01((rockNoise(x*.31,z*.6,713)-.43)*4);
+            const glacial=mixColor(this.paper?[138,168,170]:[98,131,147],target,t);
+            const water=mixColor(glacial,this.paper?[222,231,219]:[172,199,202],cascade*.72);
+            const strength=wet*(.80+irregular*.16)*smooth01((z-18)/16);
+            red+=(water[0]-red)*strength;green+=(water[1]-green)*strength;blue+=(water[2]-blue)*strength;
+          }
+        }
+        if(range===1&&drainage[iz]?.branches){
+          for(const branch of drainage[iz].branches){
+            const d=Math.abs(x-branch.x),strength=(1-smooth01(d/branch.w))*.65;
+            if(strength<=0)continue;
+            const ice=rockNoise(x*.17,z*.42,743)>.55;
+            const tone=ice?(this.paper?[220,229,219]:[173,198,207]):(this.paper?[138,157,156]:[104,134,145]);
+            red+=(tone[0]-red)*strength;green+=(tone[1]-green)*strength;blue+=(tone[2]-blue)*strength;
+          }
         }
         if(hasPrevious) {
           const y0=Math.max(0,Math.ceil((Math.min(projectedY,previousY)-top)/dy));
@@ -1589,7 +1656,7 @@ export class WorldBackdropRenderer {
   resume(){if(this.destroyed)return;this.paused=false;this._last=null;this._schedule();}
   seek(seconds){this.time=Number.isFinite(Number(seconds))?Math.max(0,Number(seconds)):0;this._last=null;this.draw();}
   replay(){this.seek(0);this.resume();}
-  destroy(){this.destroyed=true;this._cancel();this._stopMountainBake();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];this.mountains=null;this._headwaterMountain=null;this.vegetation=null;this.terrain=null;this.architecture=null;this._walkingRoutes?.clear();}
+  destroy(){this.destroyed=true;this._cancel();this._stopMountainBake();this._listeners.forEach(off=>off());this._listeners=[];this.layers=[];this.entities=[];this.mountains=null;this.vegetation=null;this.terrain=null;this.architecture=null;this._walkingRoutes?.clear();}
   async enableGyroscope(){
     if(this.destroyed||!this.ctx||typeof DeviceOrientationEvent==='undefined')return false;
     try {
@@ -1792,7 +1859,7 @@ export class WorldBackdropRenderer {
     }
   }
   _visible(x,y,margin=70){return x>-this.half-margin&&x<this.half+margin&&y<this.worldHeight+margin&&y>-margin;}
-  _planeDepth(index){return index>=4?.55:[0,.08,.15,.25][index];}
+  _planeDepth(index){return index>=3?.55:[0,.08,.15][index];}
   _plane(index,fn){
     const c=this.ctx,depth=this._planeDepth(index);
     c.save();c.setTransform(this.dpr*this.scale,0,0,this.dpr*this.scale,this.dpr*(this.width/2+this.pointer.x*depth*15),this.dpr*this.pointer.y*depth*9);
@@ -1806,7 +1873,7 @@ export class WorldBackdropRenderer {
       const l=this.layers[i],depth=this._planeDepth(i);
       c.drawImage(l.canvas,-l.pad+this.pointer.x*depth*15,-l.pad+this.pointer.y*depth*9,this.width+l.pad*2,this.height+l.pad*2);
       if(i===1)this._plane(1,cc=>this._skyMotion(cc,t));
-      if(i===3){this._plane(3,cc=>this.mountains.paintMist(cc,t));this._plane(4,cc=>this._mountainRiver(cc));}
+      if(i===3)this._plane(3,cc=>this.mountains.paintMist(cc,t));
       if(i===4)this._plane(4,cc=>this._wonderMotion(cc,t));
       if(i===4)this._plane(5,cc=>this._water(cc,t));
       if(i===5)this._plane(5,cc=>this._fields(cc,t,true));
@@ -1837,48 +1904,6 @@ export class WorldBackdropRenderer {
       line(c,[[x-4,y+flap],[x,y],[x+4,y+flap]],p[4],.8);
     }
 
-  }
-  _mountainRiver(c){
-    const mountain=this.mountains;
-    // Locate the snowfield on the actual rendered front ridge, so the source
-    // follows the era's relief instead of hanging above or below the summit.
-    if(this._headwaterMountain!==mountain||this._headwaterReady!==mountain.ready){
-      let y=mountain.skyline(349,1);
-      if(mountain.ready){
-        const range=mountain.ranges[1],canvas=range.canvas;
-        const column=clamp(Math.floor((349-mountain.left)/mountain.span*canvas.width),0,canvas.width-1);
-        const pixels=canvas.getContext('2d').getImageData(column,0,1,canvas.height).data;
-        for(let row=0;row<canvas.height;row++)if(pixels[row*4+3]>200){y=range.top+row/canvas.height*(range.bottom-range.top);break;}
-      }
-      this._headwaterSource={x:349,y:y+18};this._headwaterMountain=mountain;this._headwaterReady=mountain.ready;
-    }
-    const source=this._headwaterSource,head=(riverSourceY(-1)+riverSourceY(1))*.5;
-    const endX=riverX(head),span=head-source.y;
-    // A descending ravine with short cascades, widening into the valley river.
-    const steps=72;
-    const samples=[];
-    for(let k=0;k<steps;k++){
-      const t=k/steps,y=source.y+span*t;
-      const upper=1-smooth01(t);
-      const shiftX=(.25-.55)*this.pointer.x*15/this.scale*upper;
-      const shiftY=(.25-.55)*this.pointer.y*9/this.scale*upper;
-      const x=source.x+(endX-source.x)*smooth01(t)+Math.sin(t*Math.PI*7)*3.5*Math.sin(t*Math.PI);
-      samples.push({x:x+shiftX,y:y+shiftY,w:1.1+Math.pow(t,1.65)*(riverWidth(head)-1.1),t});
-    }
-    samples.push({x:endX,y:head+6,w:riverWidth(head),t:1});
-    const ribbon=extra=>[...samples.map(p=>[p.x-p.w-extra,p.y]),...samples.slice().reverse().map(p=>[p.x+p.w+extra,p.y])];
-    c.save();c.globalAlpha=.35;poly(c,ribbon(1.7),this.p[7]);c.globalAlpha=1;
-    const water=c.createLinearGradient(0,source.y,0,head);
-    water.addColorStop(0,this.state.paperMode?'#b6d4d2':'#91b8c7');
-    water.addColorStop(.45,this.state.paperMode?'#7fa9ad':'#628d9f');
-    water.addColorStop(1,terrainColor(mixColor(mixColor(this.terrain.colors.water,parseColor(this.p[9]),.62),parseColor(this.p[2]),.34)));poly(c,ribbon(0),water);
-    for(let k=1;k<samples.length-1;k++){
-      const p=samples[k],q=samples[k-1];
-      if(p.t>.67||k%12>7)continue;
-      line(c,[[q.x,q.y],[p.x,p.y]],this.state.paperMode?'#e1eded':'#b8d4dc',p.t<.3?.7:1.1);
-      if(k%9===0)line(c,[[p.x-p.w*.65,p.y],[p.x+p.w*.65,p.y+.7]],'#dce8e4',.65);
-    }
-    c.restore();
   }
   _water(c,t){
     const p=this.p,s=this.state;
