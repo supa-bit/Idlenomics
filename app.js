@@ -12,6 +12,7 @@ import {
   TRADE_ROUTES,
   HISTORICAL_EVENTS
 } from './data.js';
+import { initSettings } from './settings.js';
 import { WorldBackdropRenderer } from './world-canvas.js';
 
 const LOCAL_SAVE_KEY = 'idlenomics_save_v1';
@@ -101,7 +102,14 @@ function loadLocalState() {
 
 function saveLocalState() {
   state.lastTick = Date.now();
-  localStorage.setItem(LOCAL_SAVE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(LOCAL_SAVE_KEY, JSON.stringify(state));
+    document.dispatchEvent(new CustomEvent('local-save-status',{detail:'Saved on this device · '+new Date().toLocaleTimeString()}));
+    return true;
+  } catch {
+    document.dispatchEvent(new CustomEvent('local-save-status',{detail:'Save failed. Export a backup now; device storage may be unavailable or full.'}));
+    return false;
+  }
 }
 
 function loadSupaConfig() {
@@ -675,9 +683,11 @@ function renderChronicleTab() {
   `;
 
   const logList = document.getElementById('log-list');
-  logList.innerHTML = state.logs
-    .map((l) => `<div class="log-entry"><strong>[${l.time}]</strong> ${l.msg}</div>`)
-    .join('');
+  logList.replaceChildren(...state.logs.map(log=>{
+    const row=document.createElement('div');row.className='log-entry';
+    const time=document.createElement('strong');time.textContent=`[${log.time}]`;
+    row.append(time,document.createTextNode(' '+log.msg));return row;
+  }));
 }
 
 function switchTab(tabId) {
@@ -1297,37 +1307,50 @@ async function fetchSnapshotList(pruneOld = false) {
 document.getElementById('btn-cloud-push').addEventListener('click', pushCloudSnapshot);
 document.getElementById('btn-cloud-fetch').addEventListener('click', () => fetchSnapshotList(false));
 
-// Local Export / Import / Reset
-document.getElementById('btn-export-save').addEventListener('click', () => {
-  const box = document.getElementById('save-string-box');
-  box.value = btoa(unescape(encodeURIComponent(JSON.stringify(state))));
-  box.select();
-  navigator.clipboard?.writeText(box.value);
-  setSyncStatus('Save String Copied');
-});
-
-document.getElementById('btn-import-save').addEventListener('click', () => {
-  const raw = document.getElementById('save-string-box').value.trim();
-  if (!raw) return;
-  try {
-    const decoded = JSON.parse(decodeURIComponent(escape(atob(raw))));
-    state = { ...createDefaultState(), ...decoded, lastTick: Date.now() };
-    saveLocalState();
-    renderAll();
-    setSyncStatus('Save String Imported');
-  } catch (e) {
-    setSyncStatus('Invalid Save String');
+// Local save operations are shared by Settings and the Vault.
+const BACKUP_KEY = 'idlenomics_recovery_v1';
+function backupCivilization(){localStorage.setItem(BACKUP_KEY,JSON.stringify(state));}
+function restoreCivilization(raw,encoded=true){
+  const value=JSON.parse(encoded?decodeURIComponent(escape(atob(raw.trim()))):raw);
+  if(!value||typeof value!=='object'||Array.isArray(value)||!ERAS.some(e=>e.id===value.era))throw Error('This is not a valid civilization save.');
+  const base=createDefaultState();
+  for(const field of ['resources','buildings','jobs','wonders','units']){
+    if(!value[field]||typeof value[field]!=='object'||Array.isArray(value[field]))throw Error('Missing or invalid '+field+'.');
+    for(const key of Object.keys(base[field])){
+      const n=value[field][key]??base[field][key];
+      if(typeof n!=='number'||!Number.isFinite(n)||n<0||n>1e15)throw Error('Invalid '+field+' value.');
+      base[field][key]=n;
+    }
   }
-});
-
-document.getElementById('btn-hard-reset').addEventListener('click', () => {
-  if (confirm('Wipe local civilization and restart in the Stone Age?')) {
-    state = createDefaultState();
-    saveLocalState();
-    renderAll();
-    setSyncStatus('Local Save Reset');
+  for(const key of ['pop','playtimeSeconds','landBonus','expeditionsCleared']){
+    if(typeof value[key]!=='number'||!Number.isFinite(value[key])||value[key]<0)throw Error('Invalid '+key+'.');
+    base[key]=value[key];
   }
+  if(!Array.isArray(value.techs)||value.techs.some(t=>typeof t!=='string'))throw Error('Invalid technologies.');
+  base.techs=value.techs.filter(t=>TECHS.some(x=>x.id===t));
+  base.autoCraft=Object.fromEntries(CRAFT_RECIPES.map(r=>[r.id,value.autoCraft?.[r.id]===true]));
+  base.paperMode=Boolean(value.paperMode);base.tutorialDone=true;
+  base.logs=Array.isArray(value.logs)?value.logs.filter(log=>log&&typeof log.time==='string'&&typeof log.msg==='string').slice(0,100):base.logs;
+  base.activeEvent=HISTORICAL_EVENTS.find(event=>event.id===value.activeEvent?.id)||null;
+  if(!Number.isInteger(base.pop)||base.pop>1e7||Object.values(base.jobs).reduce((a,b)=>a+b,0)>base.pop)throw Error('Invalid population or worker assignments.');
+  for(const field of ['buildings','jobs','wonders','units'])if(Object.values(base[field]).some(n=>!Number.isInteger(n)))throw Error('Invalid '+field+' counts.');
+  // Validate completely before touching either the current civilization or its backup.
+  backupCivilization();base.lastTick=Date.now();
+  localStorage.setItem(LOCAL_SAVE_KEY,JSON.stringify(base));state=base;renderAll();
+}
+const settingsMenu=initSettings({
+  renderer:worldBackdrop,
+  getTheme:()=>state.paperMode,
+  setTheme:paper=>{state.paperMode=paper;renderAll();saveLocalState();},
+  save:saveLocalState,
+  exportSave:()=>{saveLocalState();return btoa(unescape(encodeURIComponent(JSON.stringify(state))));},
+  importSave:raw=>restoreCivilization(raw),
+  recover:()=>{const raw=localStorage.getItem(BACKUP_KEY);if(!raw)throw Error('No recovery backup yet. A backup is created before an import or reset.');restoreCivilization(raw,false);},
+  reset:()=>{backupCivilization();const next=createDefaultState();next.paperMode=state.paperMode;localStorage.setItem(LOCAL_SAVE_KEY,JSON.stringify(next));state=next;renderAll();}
 });
+document.getElementById('btn-export-save').addEventListener('click',()=>settingsMenu.open('save'));
+document.getElementById('btn-import-save').addEventListener('click',()=>settingsMenu.open('save'));
+document.getElementById('btn-hard-reset').addEventListener('click',()=>settingsMenu.open('reset'));
 
 /* LIFECYCLE & 1-SECOND HEARTBEAT */
 window.addEventListener('visibilitychange', () => {

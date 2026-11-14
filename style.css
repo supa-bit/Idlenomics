@@ -1034,3 +1034,31 @@ body.world-peek-active #btn-peek-world {
 }
 
 
+
+/* Settings use the browser's modal focus boundary and Escape handling. */
+#settings-dialog { color:var(--text-primary); background:var(--bg-canvas); border:2px solid var(--border-strong); border-radius:12px; width:min(680px,calc(100vw - 24px)); max-height:90dvh; padding:22px; box-sizing:border-box; overflow:auto; }
+#settings-dialog::backdrop { background:rgba(0,0,0,.72); }
+.settings-heading { display:flex; gap:12px; align-items:center; justify-content:space-between; }
+.settings-heading h2 { margin:0; }
+#settings-dialog fieldset,#settings-dialog section { border:1px solid var(--border-strong); border-radius:6px; margin:18px 0; padding:16px; min-width:0; }
+#settings-dialog legend { padding:0 8px; font-weight:700; }
+#settings-dialog label { display:block; margin:12px 0; }
+#settings-dialog select { display:block; width:100%; margin-top:6px; padding:10px; background:var(--bg-button); color:var(--text-primary); border:1px solid var(--border-strong); font:inherit; }
+#settings-dialog option { background:var(--bg-canvas); }
+#settings-dialog input,#settings-dialog textarea { max-width:100%; box-sizing:border-box; }
+#settings-dialog .settings-check { display:flex; align-items:center; gap:10px; min-height:36px; }
+#settings-dialog input[type=checkbox] { width:20px; height:20px; }
+#settings-dialog button { min-height:44px; }
+#settings-message { position:sticky; bottom:-22px; background:var(--bg-canvas); padding:12px 0; margin:0; }
+:focus-visible { outline:3px solid var(--accent-teal); outline-offset:3px; }
+body.solid-panels { --bg-panel:var(--bg-canvas); --bg-header-cell:var(--bg-canvas); }
+body[data-text-size=large] #app-shell,body[data-text-size=large] #settings-dialog { font-size:17px; }
+body[data-text-size=larger] #app-shell,body[data-text-size=larger] #settings-dialog { font-size:19px; }
+body[data-text-size=large] :is(.helper-note,.res-meta,.item-desc,.nav-btn,.btn-small),body[data-text-size=larger] :is(.helper-note,.res-meta,.item-desc,.nav-btn,.btn-small) { font-size:1em; }
+@media(max-width:599px) { #settings-dialog { padding:14px; } #settings-dialog fieldset,#settings-dialog section { padding:12px; } .settings-heading { align-items:flex-start; } }
+body[data-text-size=large] :is(.btn-brutal,.brutal-input,.field-label,.stats-box,.log-container,.empty-row,.res-name,.res-value,.row-title,.row-sub,.row-cost),body[data-text-size=larger] :is(.btn-brutal,.brutal-input,.field-label,.stats-box,.log-container,.empty-row,.res-name,.res-value,.row-title,.row-sub,.row-cost) { font-size:1em; }
+body.reduce-ui-motion *,body.reduce-ui-motion *::before,body.reduce-ui-motion *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
+body[data-text-size=large] :is(.res-cell,.res-cell-bottom),body[data-text-size=larger] :is(.res-cell,.res-cell-bottom) { font-size:1em; }
+body[data-text-size=large] .res-grid,body[data-text-size=larger] .res-grid { grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
+#settings-dialog .settings-heading { position:sticky; top:-22px; background:var(--bg-canvas); z-index:2; padding:8px 0; }
+@media(max-width:599px) { #settings-dialog .settings-heading { top:-14px; } }

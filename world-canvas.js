@@ -1530,6 +1530,7 @@ export class WorldBackdropRenderer {
     this.pointer={x:0,y:0};this.aim={x:0,y:0};this.paused=false;this.destroyed=false;
     this._raf=0;this._last=null;this._signature='';this._listeners=[];this._gyro=false;
     if(!this.ctx) return;
+    this.preferences={motion:'system',parallax:true,quality:'high',fps:60};
     this.motion=window.matchMedia?.('(prefers-reduced-motion: reduce)');this.reducedMotion=Boolean(this.motion?.matches);
     this._listen(window,'resize',()=>this.resize());
     this._listen(window,'pointermove',e=>{
@@ -1541,18 +1542,19 @@ export class WorldBackdropRenderer {
       this._last=null;if(document.hidden)this._cancel();else this._schedule();
     });
     this._listen(this.motion,'change',e=>{
-      this.reducedMotion=e.matches;this.pointer={x:0,y:0};this._last=null;this._cancel();this.draw();this._schedule();
+      this.reducedMotion=this.preferences.motion==='reduced'||(this.preferences.motion==='system'&&e.matches);this.pointer={x:0,y:0};this._last=null;this._cancel();this.draw();this._schedule();
     });
     this._frame=now=>{
       this._raf=0;
       if(this.destroyed||this.paused||document.hidden)return;
+      if(this._last!==null&&now-this._last<1000/this.preferences.fps-1){this._schedule();return;}
       const dt=this._last===null?0:Math.max(0,(now-this._last)/1000);this._last=now;
       if(!this.reducedMotion) {
         this.time+=dt;const a=1-Math.exp(-dt*3.5);
-        this.pointer.x+=(this.aim.x-this.pointer.x)*a;this.pointer.y+=(this.aim.y-this.pointer.y)*a;
+        this.pointer.x=this.preferences.parallax?this.pointer.x+(this.aim.x-this.pointer.x)*a:0;this.pointer.y=this.preferences.parallax?this.pointer.y+(this.aim.y-this.pointer.y)*a:0;
       }
       // A screen moved to another monitor can change DPR without a resize event.
-      if(this.dpr!==(window.devicePixelRatio||1))this.resize();
+      if(this.dpr!==this._pixelRatio())this.resize();
       this.draw();this._schedule();
     };
     this.resize();
@@ -1564,6 +1566,14 @@ export class WorldBackdropRenderer {
   }
   _cancel(){ if(this._raf)cancelAnimationFrame(this._raf);this._raf=0; }
   _schedule(){ if(!this.destroyed&&this.ctx&&!this.paused&&!this.reducedMotion&&!document.hidden&&!this._raf)this._raf=requestAnimationFrame(this._frame); }
+  _pixelRatio(){return Math.min(window.devicePixelRatio||1,this.preferences?.quality==='low'?1:this.preferences?.quality==='balanced'?1.5:Infinity);}
+  setPreferences(preferences){
+    const oldDpr=this._pixelRatio();this.preferences={...this.preferences,...preferences};
+    this.reducedMotion=this.preferences.motion==='reduced'||(this.preferences.motion==='system'&&Boolean(this.motion?.matches));
+    this.pointer={x:0,y:0};this.aim={x:0,y:0};this._last=null;this._cancel();
+    this.paused=this.preferences.motion==='static';
+    if(oldDpr!==this._pixelRatio())this.resize();else this.draw();this._schedule();
+  }
   pause(){this.paused=true;this._last=null;this._cancel();}
   resume(){if(this.destroyed)return;this.paused=false;this._last=null;this._schedule();}
   seek(seconds){this.time=Number.isFinite(Number(seconds))?Math.max(0,Number(seconds)):0;this._last=null;this.draw();}
@@ -1583,7 +1593,7 @@ export class WorldBackdropRenderer {
   resize(){
     if(!this.ctx||this.destroyed)return;
     this.width=Math.max(1,window.innerWidth);this.height=Math.max(1,window.innerHeight);
-    this.dpr=window.devicePixelRatio||1;
+    this.dpr=this._pixelRatio();
     this.canvas.width=Math.round(this.width*this.dpr);this.canvas.height=Math.round(this.height*this.dpr);
     this.scale=Math.max(this.height/1000,this.width/3000);
     this.half=this.width/(2*this.scale);this.worldHeight=this.height/this.scale;
