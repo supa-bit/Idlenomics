@@ -12,6 +12,7 @@ import {
   TRADE_ROUTES,
   HISTORICAL_EVENTS
 } from './data.js';
+import * as economy from './simulation.js';
 import { initSettings } from './settings.js';
 import { WorldBackdropRenderer } from './world-canvas.js';
 
@@ -76,15 +77,6 @@ function loadLocalState() {
     const mergedJobs = { ...base.jobs, ...(parsed.jobs || {}) };
     const mergedResources = { ...base.resources, ...(parsed.resources || {}) };
 
-    // Auto-recover early saves where 0 workers were assigned and initial food drained
-    const totalAssigned = Object.values(mergedJobs).reduce((a, b) => a + b, 0);
-    if (totalAssigned === 0 && (parsed.pop || 3) >= 1) {
-      mergedJobs.farmer = 1;
-      if ((mergedResources.food || 0) < 25) {
-        mergedResources.food = 25;
-      }
-    }
-
     return {
       ...base,
       ...parsed,
@@ -101,7 +93,7 @@ function loadLocalState() {
 }
 
 function saveLocalState() {
-  state.lastTick = Date.now();
+  economy.advanceTo(state, Date.now());
   try {
     localStorage.setItem(LOCAL_SAVE_KEY, JSON.stringify(state));
     document.dispatchEvent(new CustomEvent('local-save-status',{detail:'Saved on this device · '+new Date().toLocaleTimeString()}));
@@ -133,95 +125,17 @@ function isUnlocked(item) {
   return true;
 }
 
-function getGlobalMultipliers() {
-  const megaStages = state.wonders.megalith || 0;
-  const zigStages = state.wonders.ziggurat || 0;
-  const colStages = state.wonders.colossus || 0;
-  const catStages = state.wonders.cathedral || 0;
+function getGlobalMultipliers() { return economy.getGlobalMultipliers(state); }
 
-  const allProdMult = 1 + (zigStages * 0.12) + (catStages * 0.20);
-  const sciMult = allProdMult * (1 + megaStages * 0.10) * (state.techs.includes('alphabet') ? 1.25 : 1);
-  const foodMult = allProdMult * (1 + megaStages * 0.10);
-  const capMult = 1 + state.landBonus + (colStages * 0.20);
+function getResourceCaps() { return economy.getResourceCaps(state); }
 
-  let craftSpeed = 1;
-  BUILDINGS.forEach((b) => {
-    if (b.effects.craftSpeed && state.buildings[b.id] > 0) {
-      craftSpeed += b.effects.craftSpeed * state.buildings[b.id];
-    }
-  });
-
-  return { allProdMult, sciMult, foodMult, capMult, craftSpeed };
-}
-
-function getResourceCaps() {
-  const { capMult } = getGlobalMultipliers();
-  const caps = {};
-  RESOURCES.forEach((r) => {
-    let base = r.baseCap;
-    BUILDINGS.forEach((b) => {
-      if (b.effects.cap && b.effects.cap[r.id]) {
-        base += b.effects.cap[r.id] * (state.buildings[b.id] || 0);
-      }
-    });
-    caps[r.id] = Math.floor(base * capMult);
-  });
-  return caps;
-}
-
-function getMaxPop() {
-  let max = 5;
-  BUILDINGS.forEach((b) => {
-    if (b.effects.maxPop) {
-      max += b.effects.maxPop * (state.buildings[b.id] || 0);
-    }
-  });
-  return max;
-}
+function getMaxPop() { return economy.getMaxPop(state); }
 
 function getAssignedPop() {
   return Object.values(state.jobs).reduce((a, b) => a + b, 0);
 }
 
-function getNetRates() {
-  const { allProdMult, sciMult, foodMult } = getGlobalMultipliers();
-  const rates = {};
-  RESOURCES.forEach((r) => { rates[r.id] = 0; });
-
-  // Buildings passive production
-  BUILDINGS.forEach((b) => {
-    const count = state.buildings[b.id] || 0;
-    if (count > 0 && b.effects.prod) {
-      Object.entries(b.effects.prod).forEach(([resId, val]) => {
-        rates[resId] += val * count;
-      });
-    }
-  });
-
-  // Jobs production
-  JOBS.forEach((j) => {
-    const workers = state.jobs[j.id] || 0;
-    if (workers > 0 && j.prod) {
-      Object.entries(j.prod).forEach(([resId, val]) => {
-        let boost = 1;
-        if (j.id === 'scholar' && state.techs.includes('philosophy')) boost = 1.4;
-        rates[resId] += val * workers * boost;
-      });
-    }
-  });
-
-  // Apply wonder & tech multipliers
-  Object.keys(rates).forEach((resId) => {
-    if (resId === 'science') rates[resId] *= sciMult;
-    else if (resId === 'food') rates[resId] *= foodMult;
-    else rates[resId] *= allProdMult;
-  });
-
-  // Citizen food consumption (0.5 food/sec per citizen)
-  rates.food -= state.pop * 0.5;
-
-  return rates;
-}
+function getNetRates() { return economy.getNetRates(state); }
 
 function getMilitaryStats() {
   const colStages = state.wonders.colossus || 0;
@@ -274,68 +188,14 @@ function addLog(msg) {
 }
 
 /* SIMULATION & OFFLINE CALCULATION */
-function simulateTicks(seconds, isOffline = false) {
-  const clampedSeconds = Math.min(Math.max(0, Math.floor(seconds)), 604800); // Up to 7 days
-  if (clampedSeconds <= 0) return;
-
-  const rates = getNetRates();
-  const caps = getResourceCaps();
-  const maxPop = getMaxPop();
-
-  Object.keys(rates).forEach((resId) => {
-    const nextVal = (state.resources[resId] || 0) + rates[resId] * clampedSeconds;
-    state.resources[resId] = Math.max(0, Math.min(caps[resId], nextVal));
-  });
-
-  // Population growth or starvation
-  if (rates.food > 0 && state.resources.food > 15 && state.pop < maxPop) {
-    const growthChance = Math.min(maxPop - state.pop, Math.floor(clampedSeconds / 25) || (Math.random() < 0.06 ? 1 : 0));
-    if (growthChance > 0) {
-      state.pop = Math.min(maxPop, state.pop + growthChance);
-      if (!isOffline) addLog(`New settlers joined your settlement (Population: ${state.pop}).`);
-    }
-  }
-
-  // Artisan Auto-Crafting
-  const artisans = state.jobs.artisan || 0;
-  if (artisans > 0) {
-    const { craftSpeed } = getGlobalMultipliers();
-    const craftCycles = Math.max(1, Math.floor((clampedSeconds * artisans * craftSpeed) / 4));
-    CRAFT_RECIPES.forEach((rec) => {
-      if (state.autoCraft[rec.id] && isUnlocked(rec)) {
-        for (let i = 0; i < Math.min(craftCycles, 50); i++) {
-          if (canAfford(rec.inputs)) {
-            payCost(rec.inputs);
-            Object.entries(rec.outputs).forEach(([outId, outAmt]) => {
-              state.resources[outId] = Math.min(caps[outId], (state.resources[outId] || 0) + outAmt);
-            });
-          } else {
-            break;
-          }
-        }
-      }
-    });
-  }
-
-  state.playtimeSeconds += clampedSeconds;
-
-  // Trigger occasional calm historical dilemma
-  if (!isOffline && !state.activeEvent && state.playtimeSeconds % 90 === 0) {
-    const pick = HISTORICAL_EVENTS[Math.floor(Math.random() * HISTORICAL_EVENTS.length)];
-    state.activeEvent = pick;
-  }
-}
-
 function checkOfflineProgress() {
-  const now = Date.now();
-  const elapsedSec = Math.floor((now - (state.lastTick || now)) / 1000);
-  if (elapsedSec >= 5) {
-    simulateTicks(elapsedSec, true);
-    const mins = Math.max(1, Math.floor(elapsedSec / 60));
-    const badge = document.getElementById('offline-badge');
-    badge.textContent = `+${elapsedSec < 60 ? elapsedSec + 's' : mins + 'm'} Offline`;
+  const result=economy.advanceTo(state,Date.now());
+  if(result.seconds>=5){
+    const seconds=result.seconds,mins=Math.floor(seconds/60);
+    const badge=document.getElementById('offline-badge');
+    badge.textContent=`+${seconds<60?seconds+'s':mins+'m'} Offline`;
     badge.classList.remove('hidden');
-    addLog(`Recovered ${elapsedSec}s of offline production while browser was closed.`);
+    addLog(`Simulated ${seconds}s of offline progress.${result.capped?' Offline progress is limited to 7 days.':''}`);
     saveLocalState();
   }
 }
@@ -466,6 +326,7 @@ function renderSettlementTab() {
   const assigned = getAssignedPop();
   const idle = Math.max(0, state.pop - assigned);
   document.getElementById('pop-summary').textContent = `Pop: ${state.pop}/${maxPop} | Idle: ${idle}`;
+  document.getElementById('pop-summary').title = 'A new settler arrives after 25 consecutive seconds with positive net food, more than 15 stored food, and spare housing.';
 
   const workerList = document.getElementById('worker-list');
   workerList.innerHTML = JOBS.filter((j) => isUnlocked(j))
@@ -513,7 +374,7 @@ function renderSettlementTab() {
 
 function renderCraftAndTechTab() {
   const artisans = state.jobs.artisan || 0;
-  document.getElementById('artisan-bonus-label').textContent = `Artisans Assigned: ${artisans}`;
+  document.getElementById('artisan-bonus-label').textContent = `Artisans: ${artisans} · ${(artisans * getGlobalMultipliers().craftSpeed / 4).toFixed(2)} cycles/s per enabled recipe · pauses when inputs or output space run out`;
 
   const craftList = document.getElementById('craft-list');
   const unlockedRecipes = CRAFT_RECIPES.filter((c) => isUnlocked(c));
@@ -1329,6 +1190,7 @@ function restoreCivilization(raw,encoded=true){
   if(!Array.isArray(value.techs)||value.techs.some(t=>typeof t!=='string'))throw Error('Invalid technologies.');
   base.techs=value.techs.filter(t=>TECHS.some(x=>x.id===t));
   base.autoCraft=Object.fromEntries(CRAFT_RECIPES.map(r=>[r.id,value.autoCraft?.[r.id]===true]));
+  base.simulation=economy.normalizeSimulation(value.simulation);
   base.paperMode=Boolean(value.paperMode);base.tutorialDone=true;
   base.logs=Array.isArray(value.logs)?value.logs.filter(log=>log&&typeof log.time==='string'&&typeof log.msg==='string').slice(0,100):base.logs;
   base.activeEvent=HISTORICAL_EVENTS.find(event=>event.id===value.activeEvent?.id)||null;
@@ -1353,7 +1215,7 @@ document.getElementById('btn-import-save').addEventListener('click',()=>settings
 document.getElementById('btn-hard-reset').addEventListener('click',()=>settingsMenu.open('reset'));
 
 /* LIFECYCLE & 1-SECOND HEARTBEAT */
-window.addEventListener('visibilitychange', () => {
+document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     checkOfflineProgress();
     renderAll();
@@ -1374,12 +1236,15 @@ window.addEventListener('scroll', () => {
   }
 }, { passive: true });
 
+// Settle elapsed time before economic actions change workers, production or costs.
+document.addEventListener('click',()=>economy.advanceTo(state,Date.now()),true);
 initVaultInputs();
 checkOfflineProgress();
 renderAll();
 
 setInterval(() => {
-  simulateTicks(1, false);
+  if(document.hidden)return;
+  economy.advanceTo(state,Date.now());
   saveLocalState();
   renderAll();
 }, 1000);
