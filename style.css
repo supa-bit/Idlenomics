@@ -1036,7 +1036,7 @@ body.world-peek-active #btn-peek-world {
 
 
 /* Settings use the browser's modal focus boundary and Escape handling. */
-#settings-dialog { color:var(--text-primary); background:var(--bg-canvas); border:2px solid var(--border-strong); border-radius:12px; width:min(680px,calc(100vw - 24px)); max-height:90dvh; padding:22px; box-sizing:border-box; overflow:auto; }
+#settings-dialog { position:fixed; inset:0; margin:auto; overscroll-behavior:contain; color:var(--text-primary); background:var(--bg-canvas); border:2px solid var(--border-strong); border-radius:12px; width:min(680px,calc(100vw - 24px)); max-height:90dvh; padding:22px; box-sizing:border-box; overflow:auto; }
 #settings-dialog::backdrop { background:rgba(0,0,0,.72); }
 .settings-heading { display:flex; gap:12px; align-items:center; justify-content:space-between; }
 .settings-heading h2 { margin:0; }
@@ -1062,3 +1062,9 @@ body[data-text-size=large] :is(.res-cell,.res-cell-bottom),body[data-text-size=l
 body[data-text-size=large] .res-grid,body[data-text-size=larger] .res-grid { grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
 #settings-dialog .settings-heading { position:sticky; top:-22px; background:var(--bg-canvas); z-index:2; padding:8px 0; }
 @media(max-width:599px) { #settings-dialog .settings-heading { top:-14px; } }
+
+/* Keep wheel, touch and keyboard scrolling without visible scrollbar tracks. */
+* { scrollbar-width:none; }
+*::-webkit-scrollbar { display:none; width:0; height:0; }
+body.settings-open { overflow:hidden; }
+#settings-dialog .settings-heading { flex-shrink:0; }

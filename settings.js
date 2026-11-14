@@ -71,9 +71,9 @@ export function initSettings(api){
     }catch(error){message.textContent=error.message||'The action could not be completed. Your civilization has not been replaced.';}
   });
   let opener;
-  function open(section){opener=document.activeElement;sync();message.textContent='';resetWord.value='';resetButton.disabled=true;if(!dialog.open)dialog.showModal();if(section)dialog.querySelector('#settings-'+section)?.focus();}
+  function open(section){opener=document.activeElement;sync();message.textContent='';resetWord.value='';resetButton.disabled=true;document.body.classList.add('settings-open');if(!dialog.open)dialog.showModal();dialog.scrollTop=0;if(section)dialog.querySelector('#settings-'+section)?.focus();}
   dialog.querySelector('#settings-close').onclick=()=>dialog.close();
-  dialog.addEventListener('close',()=>{opener?.focus();});
+  dialog.addEventListener('close',()=>{document.body.classList.remove('settings-open');opener?.focus();});
   document.getElementById('btn-settings').onclick=()=>open();
   document.addEventListener('local-save-status',e=>{dialog.querySelector('#settings-save-status').textContent=e.detail;});
   deviceMotion.addEventListener('change',apply);
