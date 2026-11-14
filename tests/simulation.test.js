@@ -2,7 +2,9 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {simulateSeconds,advanceTo,getNetRates,getResourceCaps,getEconomyDiagnostics,MAX_OFFLINE_SECONDS} from '../simulation.js';
 import {RESOURCES,BUILDINGS,JOBS,WONDERS,MILITARY_UNITS,CRAFT_RECIPES,TECHS,ERAS} from '../data.js';
+import {OPENING_MILESTONES,evaluateOpeningSession,getVisibleResources} from '../opening-guide.js';
 const zeros=items=>Object.fromEntries(items.map(x=>[x.id,0]));
+const getEraOrder=eraId=>ERAS.find(e=>e.id===eraId)?.order||0;
 function fixture(){return {era:'medieval',pop:12,landBonus:0,playtimeSeconds:0,lastTick:1000,resources:Object.fromEntries(RESOURCES.map(r=>[r.id,Math.min(80,r.baseCap)])),buildings:{...zeros(BUILDINGS),hide_tent:10},jobs:{...zeros(JOBS),farmer:7,artisan:1,woodcutter:1,quarrier:1,hunter:1,miner:1},wonders:zeros(WONDERS),units:zeros(MILITARY_UNITS),techs:TECHS.map(t=>t.id),autoCraft:Object.fromEntries(CRAFT_RECIPES.map(r=>[r.id,true])),activeEvent:null};}
 const clone=structuredClone;
 for(const era of ERAS)test(`${era.id}: bulk, single-second, irregular, and save/reload progression agree`,()=>{
@@ -92,4 +94,36 @@ test('return summary reports actual gains, spending, overflow, completed batches
   assert(Math.abs((r.gained-r.used)-r.net)<1e-7,`${r.id}: gained-used != net`);
  }
 });
-
+test('progressive resource disclosure starts with 3 core resources and reveals hide, science, and tools as unlocked',()=>{
+ const s={era:'stone',pop:3,resources:{...zeros(RESOURCES),food:25,wood:20},buildings:zeros(BUILDINGS),jobs:{...zeros(JOBS),farmer:1},techs:[],claimedMilestones:[]};
+ assert.deepEqual(getVisibleResources(s,RESOURCES,getEraOrder).map(r=>r.id),['food','wood','stone']);
+ s.resources.hide=1;
+ assert.deepEqual(getVisibleResources(s,RESOURCES,getEraOrder).map(r=>r.id),['food','wood','stone','hide']);
+ s.techs.push('oral_tradition');
+ assert.deepEqual(getVisibleResources(s,RESOURCES,getEraOrder).map(r=>r.id),['food','wood','stone','hide','science']);
+ s.techs.push('toolmaking');
+ assert.deepEqual(getVisibleResources(s,RESOURCES,getEraOrder).map(r=>r.id),['food','wood','stone','hide','tools','science']);
+});
+test('opening milestones award one-time bonuses bounded by storage caps and guide through the Stone Age',()=>{
+ const s={era:'stone',pop:3,landBonus:0,resources:{...zeros(RESOURCES),food:30,wood:26},buildings:zeros(BUILDINGS),jobs:{...zeros(JOBS),farmer:1},wonders:zeros(WONDERS),units:zeros(MILITARY_UNITS),techs:[],claimedMilestones:[]};
+ const logs=[];
+ const r1=evaluateOpeningSession(s,getResourceCaps(s),msg=>logs.push(msg));
+ assert.deepEqual(r1.newlyClaimed.map(m=>m.id),['gather_vital_stores']);
+ assert.equal(s.resources.food,40);
+ assert.equal(s.resources.wood,36);
+ assert.equal(s.resources.hide,2);
+ // Re-running without new progress does not double-award
+ const r1Again=evaluateOpeningSession(s,getResourceCaps(s),msg=>logs.push(msg));
+ assert.equal(r1Again.newlyClaimed.length,0);
+ assert.equal(r1Again.activeMilestone.id,'assign_idle_labor');
+ // Complete remaining milestones in order
+ s.jobs.farmer=2;s.jobs.woodcutter=1;
+ s.buildings.forager_hut=1;
+ s.techs.push('oral_tradition');
+ s.buildings.totem_pole=1;
+ s.techs.push('toolmaking');s.resources.tools=4;
+ s.techs.push('pottery');s.buildings.granary=1;
+ const rAll=evaluateOpeningSession(s,getResourceCaps(s),msg=>logs.push(msg));
+ assert.equal(rAll.allDone,true);
+ assert.equal(s.claimedMilestones.length,OPENING_MILESTONES.length);
+});
